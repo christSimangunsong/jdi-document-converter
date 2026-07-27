@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF to Text Converter</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: #1a73e8; color: #fff; padding: 20px; text-align: center; }
+    header h1 { font-size: 1.5rem; font-weight: 600; }
+    header p { font-size: 0.9rem; opacity: 0.85; margin-top: 4px; }
+    main { flex: 1; max-width: 900px; margin: 24px auto; width: 100%; padding: 0 16px; }
+    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); margin-bottom: 16px; overflow: hidden; }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid #eee; font-weight: 600; font-size: 1rem; }
+    .card-body { padding: 20px; }
+    .tabs { display: flex; border-bottom: 2px solid #e0e0e0; }
+    .tab { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-weight: 500; color: #666; transition: all 0.2s; border-bottom: 2px solid transparent; margin-bottom: -2px; user-select: none; }
+    .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 0.9rem; }
+    textarea, input[type="file"] { width: 100%; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 6px; font-size: 0.95rem; outline: none; transition: border 0.2s; font-family: inherit; }
+    textarea:focus { border-color: #1a73e8; }
+    textarea { resize: vertical; min-height: 100px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 24px; border: none; border-radius: 6px; font-size: 0.95rem; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .btn-primary { background: #1a73e8; color: #fff; }
+    .btn-primary:hover { background: #1557b0; }
+    .btn-primary:disabled { background: #93b8f0; cursor: not-allowed; }
+    .btn-success { background: #188038; color: #fff; }
+    .btn-success:hover { background: #146c2e; }
+    .btn-sm { padding: 6px 14px; font-size: 0.85rem; }
+    .spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn.loading .spinner { display: inline-block; }
+    .btn.loading .btn-text { display: none; }
+    .error-msg { background: #fce8e6; color: #c5221f; padding: 12px 16px; border-radius: 6px; margin-top: 12px; display: none; }
+    .error-msg.show { display: block; }
+    footer { text-align: center; padding: 16px; color: #888; font-size: 0.8rem; }
+    .loading-bar { display: none; align-items: center; gap: 8px; color: #666; font-size: 0.9rem; margin-top: 12px; padding: 12px 0; }
+    .loading-bar.show { display: flex; }
+    .loading-bar .spinner-dark { width: 16px; height: 16px; border: 2px solid rgba(0,0,0,0.1); border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
+    .progress-text { display: flex; flex-direction: column; gap: 2px; }
+    .progress-text .title { font-weight: 500; }
+    .progress-text .sub { font-size: 0.85rem; color: #888; }
+    .help-text { font-size: 0.85rem; color: #888; margin-top: 4px; }
+    .batch-hint { background: #e8f0fe; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; color: #1a73e8; margin-bottom: 12px; }
+
+    /* Result list */
+    #resultList { display: none; }
+    #resultList.show { display: block; }
+    .result-item { border: 1px solid #dadce0; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+    .result-item.success { border-left: 4px solid #188038; }
+    .result-item.fail { border-left: 4px solid #c5221f; }
+    .result-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none; transition: background 0.15s; }
+    .result-header:hover { background: #f8f9fa; }
+    .result-header .status-icon { font-size: 1.2rem; width: 24px; text-align: center; }
+    .result-header .file-info { flex: 1; min-width: 0; }
+    .result-header .file-info .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .result-header .file-info .meta { font-size: 0.8rem; color: #888; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+    .result-header .expand-icon { color: #999; transition: transform 0.2s; font-size: 0.85rem; }
+    .result-header.expanded .expand-icon { transform: rotate(90deg); }
+    .result-body { display: none; padding: 0 16px 16px; }
+    .result-body.show { display: block; }
+    .result-body .text-output { background: #f8f9fa; border: 1px solid #dadce0; border-radius: 6px; padding: 12px; max-height: 350px; overflow-y: auto; white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 0.82rem; line-height: 1.5; margin-bottom: 10px; }
+    .result-body .actions { display: flex; gap: 8px; }
+    .result-body .error-detail { background: #fce8e6; color: #c5221f; padding: 10px 14px; border-radius: 6px; font-size: 0.9rem; }
+    #emptyState { text-align: center; padding: 40px 20px; color: #999; display: none; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 500; display: inline-block; }
+    .badge-text { background: #e8f0fe; color: #1a73e8; }
+    .badge-scan { background: #fce8e6; color: #c5221f; }
+    .badge-success { background: #e6f4ea; color: #188038; }
+    .badge-skip { background: #fef7e0; color: #ea8600; }
+    .badge-fail { background: #fce8e6; color: #c5221f; }
+    @media (max-width: 600px) { header h1 { font-size: 1.2rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>PDF to Text Converter</h1>
+    <p>Konversi PDF scan (gambar) menjadi teks &mdash; batch hingga 20 file</p>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="tabs">
+        <div class="tab active" data-tab="url">URL PDF</div>
+        <div class="tab" data-tab="upload">Upload File</div>
+      </div>
+
+      <div class="card-body">
+        <div id="tab-url" class="tab-content active">
+          <div class="batch-hint">Masukkan URL PDF &mdash; satu URL per baris</div>
+          <div class="form-group">
+            <label for="pdfUrls">URL PDF (maks 20)</label>
+            <textarea id="pdfUrls" placeholder="https://example.com/dokumen1.pdf&#10;https://example.com/dokumen2.pdf"></textarea>
+          </div>
+          <button class="btn btn-primary" id="btnUrls">Proses Semua URL</button>
+        </div>
+
+        <div id="tab-upload" class="tab-content">
+          <div class="batch-hint">Pilih beberapa file PDF sekaligus</div>
+          <div class="form-group">
+            <label for="pdfFiles">Pilih file PDF</label>
+            <input type="file" id="pdfFiles" accept=".pdf" multiple>
+          </div>
+          <button class="btn btn-primary" id="btnFiles">Proses Semua File</button>
+        </div>
+
+        <div class="loading-bar" id="loadingBar">
+          <div class="spinner-dark"></div>
+          <div class="progress-text">
+            <span class="title" id="progressTitle">Memproses...</span>
+            <span class="sub" id="progressSub">0 / 0 selesai</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="resultList">
+      <div class="card-header">Hasil Konversi</div>
+      <div class="card-body" id="resultContainer"></div>
+    </div>
+  </main>
+
+  <footer>PDF to Text Converter</footer>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        $(`tab-${tab.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    function showLoading(msg, current, total) {
+      $('progressTitle').textContent = msg;
+      $('progressSub').textContent = `${current} / ${total} selesai`;
+      $('loadingBar').classList.add('show');
+    }
+
+    function hideLoading() {
+      $('loadingBar').classList.remove('show');
+    }
+
+    function addResultItem(data, index) {
+      $('resultList').classList.add('show');
+      const container = $('resultContainer');
+      const isSuccess = data.status === 'BERHASIL';
+      const name = data.originalName || data.url || `File ${index + 1}`;
+      const fileName = data.outputFile || '';
+
+      const badges = [];
+      if (data.type) {
+        badges.push(`<span class="badge ${data.type === 'TEXT' ? 'badge-text' : 'badge-scan'}">${data.type === 'TEXT' ? 'Teks' : 'Scan'}</span>`);
+      }
+      if (data.pageCount) {
+        badges.push(`<span class="badge badge-success">${data.pageCount} hlm</span>`);
+      }
+      if (data.ocrStatus) {
+        const cls = data.ocrStatus === 'BERHASIL' ? 'badge-success' : data.ocrStatus === 'TIDAK DIPERLUKAN' ? 'badge-skip' : '';
+        if (cls) badges.push(`<span class="badge ${cls}">OCR: ${data.ocrStatus}</span>`);
+      }
+      if (data.durasi) {
+        badges.push(`<span class="badge">${data.durasi}</span>`);
+      }
+
+      const item = document.createElement('div');
+      item.className = `result-item ${isSuccess ? 'success' : 'fail'}`;
+      item.innerHTML = `
+        <div class="result-header">
+          <span class="status-icon">${isSuccess ? '&#9989;' : '&#10060;'}</span>
+          <div class="file-info">
+            <div class="name">${escHtml(name)}</div>
+            <div class="meta">${badges.join(' ')}</div>
+          </div>
+          <span class="expand-icon">&#9654;</span>
+        </div>
+        <div class="result-body">
+          ${isSuccess ? `
+            <div class="text-output">${escHtml(data.text)}</div>
+            <div class="actions">
+              <button class="btn btn-success btn-sm" onclick="window.location.href='/download/${fileName}'">Download .txt</button>
+              <button class="btn btn-sm" style="background:#f1f3f4" onclick="copyText(this, '${escHtmlAttr(data.text)}')">Salin Teks</button>
+            </div>
+          ` : `
+            <div class="error-detail">${escHtml(data.error || 'Gagal diproses')}</div>
+          `}
+        </div>
+      `;
+
+      const header = item.querySelector('.result-header');
+      const body = item.querySelector('.result-body');
+      header.addEventListener('click', () => {
+        header.classList.toggle('expanded');
+        body.classList.toggle('show');
+      });
+
+      container.appendChild(item);
+    }
+
+    function clearResults() {
+      $('resultContainer').innerHTML = '';
+      $('resultList').classList.remove('show');
+    }
+
+    function escHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function escHtmlAttr(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function copyText(btn, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Tersalin!';
+        setTimeout(() => { btn.textContent = 'Salin Teks'; }, 2000);
+      });
+    }
+
+    async function processUrls() {
+      const raw = $('pdfUrls').value.trim();
+      const urls = raw.split('\n').map(u => u.trim()).filter(Boolean);
+      if (urls.length === 0) { alert('Masukkan minimal 1 URL PDF'); return; }
+      if (urls.length > 20) { alert('Maksimal 20 URL'); return; }
+
+      clearResults();
+      showLoading('Memproses URL...', 0, urls.length);
+
+      try {
+        const res = await fetch('/process-urls', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ urls })
+        });
+        const data = await res.json();
+        hideLoading();
+
+        if (data.error) { alert(data.error); return; }
+
+        if (data.results) {
+          data.results.forEach((r, i) => {
+            addResultItem(r, i);
+            showLoading('Memproses URL...', i + 1, data.results.length);
+          });
+        }
+        hideLoading();
+      } catch (e) {
+        hideLoading();
+        alert('Gagal terhubung ke server');
+      }
+    }
+
+    async function processFiles() {
+      const files = $('pdfFiles').files;
+      if (files.length === 0) { alert('Pilih minimal 1 file PDF'); return; }
+      if (files.length > 20) { alert('Maksimal 20 file'); return; }
+
+      clearResults();
+      showLoading('Memproses file...', 0, files.length);
+
+      const form = new FormData();
+      for (const file of files) {
+        form.append('pdf', file);
+      }
+
+      try {
+        const res = await fetch('/process-uploads', { method: 'POST', body: form });
+        const data = await res.json();
+        hideLoading();
+
+        if (data.error) { alert(data.error); return; }
+
+        if (data.results) {
+          data.results.forEach((r, i) => {
+            addResultItem(r, i);
+            showLoading('Memproses file...', i + 1, data.results.length);
+          });
+        }
+        hideLoading();
+      } catch (e) {
+        hideLoading();
+        alert('Gagal terhubung ke server');
+      }
+    }
+
+    $('btnUrls').addEventListener('click', processUrls);
+    $('btnFiles').addEventListener('click', processFiles);
+  </script>
+</body>
+</html>
