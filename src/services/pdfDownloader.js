@@ -2,10 +2,20 @@ const axios = require('axios');
 const config = require('../config');
 const { withRetry } = require('../utils/retry');
 
+function encodeUrl(raw) {
+  try {
+    const parsed = new URL(raw);
+    return parsed.href;
+  } catch {
+    return raw.replace(/\s/g, '%20');
+  }
+}
+
 async function downloadPdf(url) {
+  const encoded = encodeUrl(url);
   const response = await withRetry(
     () =>
-      axios.get(url, {
+      axios.get(encoded, {
         responseType: 'arraybuffer',
         timeout: config.downloadTimeout,
         headers: {

@@ -4,76 +4,153 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PDF to Text Converter</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #333; min-height: 100vh; display: flex; flex-direction: column; }
-    header { background: #1a73e8; color: #fff; padding: 20px; text-align: center; }
-    header h1 { font-size: 1.5rem; font-weight: 600; }
-    header p { font-size: 0.9rem; opacity: 0.85; margin-top: 4px; }
-    main { flex: 1; max-width: 900px; margin: 24px auto; width: 100%; padding: 0 16px; }
-    .card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); margin-bottom: 16px; overflow: hidden; }
-    .card-header { padding: 16px 20px; border-bottom: 1px solid #eee; font-weight: 600; font-size: 1rem; }
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #333; min-height: 100vh; display: flex; flex-direction: column; }
+    header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; padding: 28px 20px 22px; text-align: center; position: relative; overflow: hidden; }
+    header::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(255,255,255,0.03) 1px, transparent 1px); background-size: 30px 30px; pointer-events: none; }
+    header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.5px; }
+    header p { font-size: 0.9rem; opacity: 0.75; margin-top: 4px; }
+    main { flex: 1; max-width: 960px; margin: 28px auto; width: 100%; padding: 0 16px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 20px; overflow: hidden; border: 1px solid rgba(0,0,0,0.04); transition: box-shadow 0.2s; }
+    .card:hover { box-shadow: 0 6px 28px rgba(0,0,0,0.12); }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid #f0f0f0; font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
     .card-body { padding: 20px; }
-    .tabs { display: flex; border-bottom: 2px solid #e0e0e0; }
-    .tab { flex: 1; padding: 12px; text-align: center; cursor: pointer; font-weight: 500; color: #666; transition: all 0.2s; border-bottom: 2px solid transparent; margin-bottom: -2px; user-select: none; }
-    .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+    .tabs { display: flex; border-bottom: 2px solid #eef0f4; background: #fafbfc; border-radius: 14px 14px 0 0; }
+    .tab { flex: 1; padding: 14px 12px; text-align: center; cursor: pointer; font-weight: 500; font-size: 0.9rem; color: #888; transition: all 0.25s; border-bottom: 2.5px solid transparent; margin-bottom: -2px; user-select: none; letter-spacing: 0.3px; }
+    .tab:hover { color: #555; background: rgba(0,0,0,0.02); }
+    .tab.active { color: #667eea; border-bottom-color: #667eea; background: #fff; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     .form-group { margin-bottom: 16px; }
-    label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 0.9rem; }
-    textarea, input[type="file"] { width: 100%; padding: 10px 12px; border: 1px solid #dadce0; border-radius: 6px; font-size: 0.95rem; outline: none; transition: border 0.2s; font-family: inherit; }
-    textarea:focus { border-color: #1a73e8; }
+    label { display: block; font-weight: 500; margin-bottom: 6px; font-size: 0.85rem; color: #555; }
+    textarea, input[type="file"] { width: 100%; padding: 11px 14px; border: 1.5px solid #e0e3e8; border-radius: 10px; font-size: 0.9rem; outline: none; transition: border 0.2s, box-shadow 0.2s; font-family: inherit; background: #fafbfc; }
+    textarea:focus { border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,0.15); background: #fff; }
     textarea { resize: vertical; min-height: 100px; }
-    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 24px; border: none; border-radius: 6px; font-size: 0.95rem; font-weight: 500; cursor: pointer; transition: background 0.2s; }
-    .btn-primary { background: #1a73e8; color: #fff; }
-    .btn-primary:hover { background: #1557b0; }
-    .btn-primary:disabled { background: #93b8f0; cursor: not-allowed; }
-    .btn-success { background: #188038; color: #fff; }
-    .btn-success:hover { background: #146c2e; }
-    .btn-sm { padding: 6px 14px; font-size: 0.85rem; }
-    .spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 22px; border: none; border-radius: 10px; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: all 0.2s; letter-spacing: 0.2px; white-space: nowrap; }
+    .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; box-shadow: 0 2px 8px rgba(102,126,234,0.3); }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(102,126,234,0.4); }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-success { background: linear-gradient(135deg, #11998e, #38ef7d); color: #fff; box-shadow: 0 2px 8px rgba(56,239,125,0.3); }
+    .btn-success:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(56,239,125,0.4); }
+    .btn-outline { background: #fff; color: #555; border: 1.5px solid #e0e3e8; }
+    .btn-outline:hover { border-color: #667eea; color: #667eea; background: #f8f9ff; }
+    .btn-sm { padding: 7px 16px; font-size: 0.82rem; border-radius: 8px; }
+    .btn-xs { padding: 5px 12px; font-size: 0.76rem; border-radius: 6px; }
+    .btn-upload-db { background: linear-gradient(135deg, #f093fb, #f5576c); color: #fff; box-shadow: 0 2px 8px rgba(245,87,108,0.2); }
+    .btn-upload-db:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(245,87,108,0.35); }
+    .btn-upload-db:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-upload-db.done { background: linear-gradient(135deg, #11998e, #38ef7d); box-shadow: 0 2px 8px rgba(56,239,125,0.2); cursor: default; }
+    .spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .btn.loading .spinner { display: inline-block; }
     .btn.loading .btn-text { display: none; }
-    .error-msg { background: #fce8e6; color: #c5221f; padding: 12px 16px; border-radius: 6px; margin-top: 12px; display: none; }
+    footer { text-align: center; padding: 20px; color: rgba(255,255,255,0.5); font-size: 0.78rem; }
+    .error-msg { background: #fff0f0; color: #c0392b; padding: 12px 16px; border-radius: 10px; margin-top: 12px; display: none; border: 1px solid #fdd; }
     .error-msg.show { display: block; }
-    footer { text-align: center; padding: 16px; color: #888; font-size: 0.8rem; }
-    .loading-bar { display: none; align-items: center; gap: 8px; color: #666; font-size: 0.9rem; margin-top: 12px; padding: 12px 0; }
+    .loading-bar { display: none; align-items: center; gap: 10px; color: #666; font-size: 0.85rem; margin-top: 16px; padding: 14px 16px; background: #f8f9ff; border-radius: 10px; border: 1px solid #eef0f4; }
     .loading-bar.show { display: flex; }
-    .loading-bar .spinner-dark { width: 16px; height: 16px; border: 2px solid rgba(0,0,0,0.1); border-top-color: #1a73e8; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
+    .loading-bar .spinner-dark { width: 18px; height: 18px; border: 2.5px solid rgba(102,126,234,0.15); border-top-color: #667eea; border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0; }
     .progress-text { display: flex; flex-direction: column; gap: 2px; }
-    .progress-text .title { font-weight: 500; }
-    .progress-text .sub { font-size: 0.85rem; color: #888; }
-    .help-text { font-size: 0.85rem; color: #888; margin-top: 4px; }
-    .batch-hint { background: #e8f0fe; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem; color: #1a73e8; margin-bottom: 12px; }
+    .progress-text .title { font-weight: 600; }
+    .progress-text .sub { font-size: 0.8rem; color: #999; }
+    .help-text { font-size: 0.8rem; color: #999; margin-top: 4px; }
+    .batch-hint { background: linear-gradient(135deg, #f5f7ff, #eef0ff); padding: 10px 14px; border-radius: 10px; font-size: 0.82rem; color: #667eea; margin-bottom: 14px; border: 1px solid #e0e5ff; }
 
     /* Result list */
     #resultList { display: none; }
     #resultList.show { display: block; }
-    .result-item { border: 1px solid #dadce0; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
-    .result-item.success { border-left: 4px solid #188038; }
-    .result-item.fail { border-left: 4px solid #c5221f; }
-    .result-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none; transition: background 0.15s; }
-    .result-header:hover { background: #f8f9fa; }
-    .result-header .status-icon { font-size: 1.2rem; width: 24px; text-align: center; }
+    .result-item { border: 1px solid #eef0f4; border-radius: 12px; margin-bottom: 12px; overflow: hidden; transition: box-shadow 0.2s; }
+    .result-item:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+    .result-item.success { border-left: 4px solid #11998e; }
+    .result-item.fail { border-left: 4px solid #e74c3c; }
+    .result-header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; cursor: pointer; user-select: none; transition: background 0.15s; }
+    .result-header:hover { background: #fafbfc; }
+    .result-header .status-icon { font-size: 1.15rem; width: 24px; text-align: center; flex-shrink: 0; }
     .result-header .file-info { flex: 1; min-width: 0; }
-    .result-header .file-info .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .result-header .file-info .meta { font-size: 0.8rem; color: #888; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
-    .result-header .expand-icon { color: #999; transition: transform 0.2s; font-size: 0.85rem; }
+    .result-header .file-info .name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .result-header .file-info .meta { font-size: 0.78rem; color: #999; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .result-header .expand-icon { color: #ccc; transition: transform 0.25s; font-size: 0.8rem; flex-shrink: 0; }
     .result-header.expanded .expand-icon { transform: rotate(90deg); }
-    .result-body { display: none; padding: 0 16px 16px; }
+    .result-body { display: none; padding: 0 18px 18px; }
     .result-body.show { display: block; }
-    .result-body .text-output { background: #f8f9fa; border: 1px solid #dadce0; border-radius: 6px; padding: 12px; max-height: 350px; overflow-y: auto; white-space: pre-wrap; font-family: 'Courier New', monospace; font-size: 0.82rem; line-height: 1.5; margin-bottom: 10px; }
-    .result-body .actions { display: flex; gap: 8px; }
-    .result-body .error-detail { background: #fce8e6; color: #c5221f; padding: 10px 14px; border-radius: 6px; font-size: 0.9rem; }
-    #emptyState { text-align: center; padding: 40px 20px; color: #999; display: none; }
-    .badge { padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 500; display: inline-block; }
-    .badge-text { background: #e8f0fe; color: #1a73e8; }
-    .badge-scan { background: #fce8e6; color: #c5221f; }
-    .badge-success { background: #e6f4ea; color: #188038; }
-    .badge-skip { background: #fef7e0; color: #ea8600; }
-    .badge-fail { background: #fce8e6; color: #c5221f; }
-    @media (max-width: 600px) { header h1 { font-size: 1.2rem; } }
+    .result-body .text-output { background: #f8f9fc; border: 1px solid #eef0f4; border-radius: 10px; padding: 14px; max-height: 350px; overflow-y: auto; white-space: pre-wrap; font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.8rem; line-height: 1.65; margin-bottom: 12px; }
+    .result-body .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .result-body .error-detail { background: #fff5f5; color: #c0392b; padding: 12px 16px; border-radius: 10px; font-size: 0.85rem; border: 1px solid #fdd; }
+    .badge { padding: 3px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; display: inline-block; letter-spacing: 0.2px; }
+    .badge-text { background: linear-gradient(135deg, #e8f0fe, #d4e4fc); color: #1a73e8; }
+    .badge-scan { background: linear-gradient(135deg, #fce8e6, #f8d7da); color: #c5221f; }
+    .badge-success { background: linear-gradient(135deg, #e6f4ea, #c8e6c9); color: #188038; }
+    .badge-skip { background: linear-gradient(135deg, #fef7e0, #ffecb3); color: #ea8600; }
+    .badge-fail { background: linear-gradient(135deg, #fce8e6, #f8d7da); color: #c5221f; }
+    .badge-rusak { background: linear-gradient(135deg, #fff3e0, #ffe0b2); color: #e65100; }
+    .badge-kosong { background: linear-gradient(135deg, #e3f2fd, #bbdefb); color: #1565c0; }
+    .badge-uploaded { background: linear-gradient(135deg, #e8f5e9, #c8e6c9); color: #2e7d32; }
+
+    /* Activity Dashboard */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 18px; }
+    .stat-card { background: linear-gradient(135deg, #f8f9fc, #f0f1f5); border-radius: 12px; padding: 16px 14px; text-align: center; border-left: 4px solid #ccc; transition: transform 0.2s; }
+    .stat-card:hover { transform: translateY(-2px); }
+    .stat-card .num { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.5px; }
+    .stat-card .lbl { font-size: 0.72rem; color: #888; margin-top: 3px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card.stat-total { border-left-color: #667eea; }
+    .stat-card.stat-success { border-left-color: #11998e; }
+    .stat-card.stat-fail { border-left-color: #e74c3c; }
+    .stat-card.stat-rusak { border-left-color: #e65100; }
+    .stat-card.stat-kosong { border-left-color: #1565c0; }
+    .stat-card.stat-uploaded { border-left-color: #2e7d32; }
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+    @media (max-width: 600px) { .charts-row { grid-template-columns: 1fr; } }
+    .chart-box { background: #f8f9fc; border-radius: 12px; padding: 14px; height: 210px; position: relative; border: 1px solid #eef0f4; }
+    .chart-box canvas { max-height: 180px; }
+    .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid #eef0f4; }
+    .table-wrap table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .table-wrap th { background: #f8f9fc; text-align: left; padding: 11px 14px; font-weight: 600; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.3px; color: #888; white-space: nowrap; }
+    .table-wrap td { padding: 11px 14px; border-bottom: 1px solid #f5f5f5; vertical-align: middle; }
+    .table-wrap tr:last-child td { border-bottom: none; }
+    .table-wrap tr:hover td { background: #fafbfc; }
+    .table-wrap .btn-action { padding: 4px 12px; font-size: 0.74rem; border: none; border-radius: 6px; cursor: pointer; margin-right: 4px; white-space: nowrap; font-weight: 500; transition: all 0.2s; }
+    .btn-upload { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+    .btn-upload:hover { opacity: 0.9; transform: translateY(-1px); }
+    .btn-upload:disabled { opacity: 0.5; cursor: default; transform: none; }
+    .btn-upload.uploaded { background: linear-gradient(135deg, #11998e, #38ef7d); }
+    .btn-detail { background: #f0f1f5; color: #555; }
+    .btn-detail:hover { background: #e5e7ed; }
+    .btn-detail-green { background: linear-gradient(135deg, #11998e, #38ef7d); color: #fff; }
+    .btn-detail-green:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    /* Modal Detail */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; animation: fadeIn 0.2s ease; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal-box { background: #fff; border-radius: 14px; max-width: 700px; width: 100%; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.3); animation: slideUp 0.25s ease; }
+    @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid #eef0f4; flex-shrink: 0; }
+    .modal-header span { font-weight: 700; font-size: 1rem; }
+    .modal-close { background: none; border: none; font-size: 1.5rem; color: #999; cursor: pointer; line-height: 1; padding: 0 4px; transition: color 0.15s; }
+    .modal-close:hover { color: #333; }
+    .modal-body { padding: 20px 22px; overflow-y: auto; flex: 1; }
+    .modal-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 18px; background: #f8f9fc; border-radius: 10px; padding: 14px 16px; border: 1px solid #eef0f4; }
+    .modal-meta-item { font-size: 0.8rem; }
+    .modal-meta-item .label { color: #999; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.3px; }
+    .modal-meta-item .value { font-weight: 600; margin-top: 2px; word-break: break-word; }
+    .modal-body h4 { font-size: 0.85rem; margin-bottom: 8px; color: #555; }
+    .modal-text { background: #f8f9fc; border: 1px solid #eef0f4; border-radius: 10px; padding: 16px; max-height: 380px; overflow-y: auto; white-space: pre-wrap; font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 0.82rem; line-height: 1.7; }
+
+    /* Upload all button in header */
+    .header-actions { display: flex; align-items: center; gap: 8px; }
+    #uploadAllBtn { display: none; }
+    #uploadAllBtn.show { display: inline-flex; }
+    .upload-counter { font-size: 0.78rem; color: #999; }
+
+    @media (max-width: 640px) {
+      header h1 { font-size: 1.3rem; }
+      header p { font-size: 0.8rem; }
+      main { margin: 16px auto; }
+      .card-body { padding: 14px; }
+      .stats-row { grid-template-columns: repeat(3, 1fr); }
+      .header-actions { width: 100%; justify-content: flex-end; }
+    }
   </style>
 </head>
 <body>
@@ -87,6 +164,7 @@
       <div class="tabs">
         <div class="tab active" data-tab="url">URL PDF</div>
         <div class="tab" data-tab="upload">Upload File</div>
+        <div class="tab" data-tab="aktivitas">Aktivitas</div>
       </div>
 
       <div class="card-body">
@@ -115,11 +193,48 @@
             <span class="sub" id="progressSub">0 / 0 selesai</span>
           </div>
         </div>
+
+        <div id="tab-aktivitas" class="tab-content">
+          <div class="stats-row" id="statsRow"></div>
+          <div class="charts-row">
+            <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+            <div class="chart-box"><canvas id="pieChart"></canvas></div>
+          </div>
+          <div style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+            <strong>Riwayat Konversi</strong>
+            <button class="btn btn-sm" style="background:#f1f3f4" onclick="loadActivities()">Muat Ulang</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tanggal</th>
+                  <th>Nama File</th>
+                  <th>Tipe</th>
+                  <th>Status</th>
+                  <th>Hlm</th>
+                  <th>Durasi</th>
+                  <th>Aksi</th>
+                </tr>
+              </thead>
+              <tbody id="activityTableBody"></tbody>
+            </table>
+          </div>
+          <div id="activityEmpty" style="text-align:center;padding:30px;color:#999;display:none;">
+            Belum ada aktivitas konversi. Upload atau proses URL untuk memulai.
+          </div>
+        </div>
       </div>
     </div>
 
     <div class="card" id="resultList">
-      <div class="card-header">Hasil Konversi</div>
+      <div class="card-header">
+        <span>Hasil Konversi</span>
+        <div class="header-actions">
+          <span class="upload-counter" id="uploadCounter"></span>
+          <button class="btn btn-success btn-xs" id="uploadAllBtn" onclick="uploadAllResults()">Upload Semua ke DB</button>
+        </div>
+      </div>
       <div class="card-body" id="resultContainer"></div>
     </div>
   </main>
@@ -136,6 +251,7 @@
         document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         $(`tab-${tab.dataset.tab}`).classList.add('active');
+        if (tab.dataset.tab === 'aktivitas') loadActivities();
       });
     });
 
@@ -149,14 +265,37 @@
       $('loadingBar').classList.remove('show');
     }
 
+    function statusIcon(status) {
+      if (status === 'BERHASIL') return '&#9989;';
+      if (status === 'RUSAK') return '&#9888;&#65039;';
+      if (status === 'KOSONG') return '&#128196;';
+      if (status === 'DUPLICATE') return '&#9888;&#65039;';
+      return '&#10060;';
+    }
+    function statusBadge(status) {
+      if (status === 'BERHASIL') return '<span class="badge badge-success">Berhasil</span>';
+      if (status === 'RUSAK') return '<span class="badge badge-rusak">Rusak</span>';
+      if (status === 'KOSONG') return '<span class="badge badge-kosong">Kosong</span>';
+      if (status === 'DUPLICATE') return '<span class="badge badge-skip">Duplikat</span>';
+      return '<span class="badge badge-fail">Gagal</span>';
+    }
+
+    const resultsStore = [];
+
     function addResultItem(data, index) {
       $('resultList').classList.add('show');
       const container = $('resultContainer');
-      const isSuccess = data.status === 'BERHASIL';
-      const name = data.originalName || data.url || `File ${index + 1}`;
+      const st = data.status || (data.error ? 'GAGAL' : 'BERHASIL');
+      const isBerhasil = st === 'BERHASIL';
+      const isDuplicate = st === 'DUPLICATE' || data.duplicate;
+      const name = data.existingFileName || data.originalName || data.url || `File ${index + 1}`;
       const fileName = data.outputFile || '';
+      const aid = data.activityId || null;
+
+      if (!isDuplicate) resultsStore.push({ activityId: aid, status: st, name, fileName });
 
       const badges = [];
+      badges.push(statusBadge(st));
       if (data.type) {
         badges.push(`<span class="badge ${data.type === 'TEXT' ? 'badge-text' : 'badge-scan'}">${data.type === 'TEXT' ? 'Teks' : 'Scan'}</span>`);
       }
@@ -171,29 +310,38 @@
         badges.push(`<span class="badge">${data.durasi}</span>`);
       }
 
+      const borderCls = isBerhasil ? 'success' : 'fail';
       const item = document.createElement('div');
-      item.className = `result-item ${isSuccess ? 'success' : 'fail'}`;
-      item.innerHTML = `
-        <div class="result-header">
-          <span class="status-icon">${isSuccess ? '&#9989;' : '&#10060;'}</span>
-          <div class="file-info">
-            <div class="name">${escHtml(name)}</div>
-            <div class="meta">${badges.join(' ')}</div>
-          </div>
-          <span class="expand-icon">&#9654;</span>
-        </div>
-        <div class="result-body">
-          ${isSuccess ? `
-            <div class="text-output">${escHtml(data.text)}</div>
-            <div class="actions">
-              <button class="btn btn-success btn-sm" onclick="window.location.href='/download/${fileName}'">Download .txt</button>
-              <button class="btn btn-sm" style="background:#f1f3f4" onclick="copyText(this, '${escHtmlAttr(data.text)}')">Salin Teks</button>
-            </div>
-          ` : `
-            <div class="error-detail">${escHtml(data.error || 'Gagal diproses')}</div>
-          `}
-        </div>
-      `;
+      item.className = `result-item ${borderCls}`;
+      item.dataset.aid = aid || '';
+      item.dataset.status = st;
+      item.innerHTML = [
+        '<div class="result-header">',
+        '  <span class="status-icon">' + statusIcon(st) + '</span>',
+        '  <div class="file-info">',
+        '    <div class="name">' + escHtml(name) + '</div>',
+        '    <div class="meta">' + badges.join(' ') + '</div>',
+        '  </div>',
+        '  <span class="expand-icon">&#9654;</span>',
+        '</div>',
+        '<div class="result-body">',
+        isDuplicate ? [
+          '<div class="error-detail" style="background:#fff8e1;color:#e65100;border-color:#ffe082;">',
+          '  <strong>Duplikat:</strong> ' + escHtml(data.error),
+          '  <div style="margin-top:6px;font-size:0.82rem;opacity:0.8;">File sudah ada di database (ID: ' + (data.existingId || '-') + ')</div>',
+          '</div>',
+        ].join('\n') : (isBerhasil ? [
+          '<div class="text-output">' + escHtml(data.text) + '</div>',
+          '<div class="actions">',
+          '  <button class="btn btn-success btn-sm" onclick="window.location.href=\'/download/' + fileName + '\'">Download .txt</button>',
+          '  <button class="btn btn-outline btn-sm" onclick="copyText(this, \'' + escHtmlAttr(data.text) + '\')">Salin Teks</button>',
+          '  <button class="btn btn-upload-db btn-sm upload-db-btn" data-aid="' + (aid || '') + '">Upload ke DB</button>',
+          '</div>',
+        ].join('\n') : [
+          '<div class="error-detail">' + escHtml(data.errorMessage || data.error || 'Gagal diproses') + '</div>',
+        ].join('\n')),
+        '</div>',
+      ].join('\n');
 
       const header = item.querySelector('.result-header');
       const body = item.querySelector('.result-body');
@@ -202,12 +350,113 @@
         body.classList.toggle('show');
       });
 
+      const upBtn = item.querySelector('.upload-db-btn');
+      if (upBtn) {
+        const aId = upBtn.dataset.aid;
+        if (aId) {
+          upBtn.addEventListener('click', function () { uploadResultItem(this, parseInt(aId, 10)); });
+        } else {
+          upBtn.style.display = 'none';
+        }
+      }
+
       container.appendChild(item);
+      updateUploadAllBtn();
+    }
+
+    function updateUploadAllBtn() {
+      const all = document.querySelectorAll('.upload-db-btn');
+      let pending = 0;
+      for (const b of all) {
+        if (b.offsetParent !== null && !b.classList.contains('done') && !b.disabled) pending++;
+      }
+      const btn = $('uploadAllBtn');
+      const counter = $('uploadCounter');
+      if (pending > 1) {
+        btn.classList.add('show');
+        btn.textContent = 'Upload Semua (' + pending + ')';
+        counter.textContent = pending + ' file belum diupload';
+      } else if (pending === 1) {
+        btn.classList.remove('show');
+        counter.textContent = '1 file belum diupload';
+      } else {
+        btn.classList.remove('show');
+        counter.textContent = 'Semua sudah diupload';
+      }
+    }
+
+    async function uploadResultItem(btn, activityId) {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Menyimpan...';
+      try {
+        const res = await fetch(`/api/activities/${activityId}/upload`, { method: 'PUT' });
+        const data = await res.json();
+        if (data.duplicate) {
+          btn.className = 'btn btn-outline btn-sm';
+          btn.innerHTML = 'Duplikat';
+          alert('Gagal: ' + data.error + ' (ID: ' + data.existingId + ')');
+          setTimeout(() => { btn.className = 'btn btn-upload-db btn-sm'; btn.innerHTML = 'Upload ke DB'; btn.disabled = false; }, 2500);
+        } else if (data.success) {
+          btn.className = 'btn btn-upload-db btn-sm done';
+          btn.innerHTML = 'Sudah diupload';
+          btn.disabled = true;
+        } else {
+          btn.innerHTML = 'Gagal!';
+          setTimeout(() => { btn.innerHTML = 'Upload ke DB'; btn.disabled = false; }, 2000);
+        }
+      } catch (e) {
+        btn.innerHTML = 'Gagal!';
+        setTimeout(() => { btn.innerHTML = 'Upload ke DB'; btn.disabled = false; }, 2000);
+      }
+      updateUploadAllBtn();
+    }
+
+    async function uploadAllResults() {
+      const all = document.querySelectorAll('.upload-db-btn');
+      const btns = [...all].filter(function (b) {
+        return b.offsetParent !== null && !b.classList.contains('done') && !b.disabled;
+      });
+      if (btns.length === 0) return;
+      const allBtn = $('uploadAllBtn');
+      allBtn.disabled = true;
+      allBtn.textContent = 'Mengupload 0 / ' + btns.length + ' ...';
+
+      for (let i = 0; i < btns.length; i++) {
+        const btn = btns[i];
+        const aid = parseInt(btn.getAttribute('data-aid'), 10);
+        if (!aid || isNaN(aid)) continue;
+        allBtn.textContent = 'Mengupload ' + (i + 1) + ' / ' + btns.length + ' ...';
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>';
+        try {
+          const res = await fetch('/api/activities/' + aid + '/upload', { method: 'PUT' });
+          const data = await res.json();
+          if (data.duplicate) {
+            btn.className = 'btn btn-outline btn-sm';
+            btn.innerHTML = 'Duplikat';
+          } else if (data.success) {
+            btn.className = 'btn btn-upload-db btn-sm done';
+            btn.innerHTML = 'Sudah diupload';
+          } else {
+            btn.innerHTML = 'Gagal';
+          }
+        } catch (e) {
+          btn.innerHTML = 'Gagal';
+        }
+      }
+
+      allBtn.disabled = false;
+      allBtn.textContent = 'Upload Semua ke DB';
+      updateUploadAllBtn();
     }
 
     function clearResults() {
+      resultsStore.length = 0;
       $('resultContainer').innerHTML = '';
       $('resultList').classList.remove('show');
+      $('uploadAllBtn').classList.remove('show');
+      $('uploadCounter').textContent = '';
     }
 
     function escHtml(str) {
@@ -295,6 +544,210 @@
 
     $('btnUrls').addEventListener('click', processUrls);
     $('btnFiles').addEventListener('click', processFiles);
+
+    let dailyChartInstance = null;
+    let pieChartInstance = null;
+
+    async function loadActivities() {
+      try {
+        const [actRes, statsRes] = await Promise.all([
+          fetch('/api/activities'),
+          fetch('/api/activities/stats'),
+        ]);
+        const activities = await actRes.json();
+        const stats = await statsRes.json();
+
+        renderStats(stats);
+        renderCharts(stats);
+        renderTable(activities);
+      } catch (e) {
+        console.error('Gagal muat aktivitas:', e);
+      }
+    }
+
+    function renderStats(stats) {
+      const s = stats.summary || {};
+      const row = $('statsRow');
+      row.innerHTML = `
+        <div class="stat-card stat-total"><div class="num">${s.total || 0}</div><div class="lbl">Total Diproses</div></div>
+        <div class="stat-card stat-success"><div class="num">${s.berhasil || 0}</div><div class="lbl">Berhasil</div></div>
+        <div class="stat-card stat-fail"><div class="num">${s.gagal || 0}</div><div class="lbl">Gagal</div></div>
+        <div class="stat-card stat-rusak"><div class="num">${s.rusak || 0}</div><div class="lbl">Rusak</div></div>
+        <div class="stat-card stat-kosong"><div class="num">${s.kosong || 0}</div><div class="lbl">Kosong</div></div>
+        <div class="stat-card stat-uploaded"><div class="num">${s.uploaded || 0}</div><div class="lbl">Terupload</div></div>
+      `;
+    }
+
+    function renderCharts(stats) {
+      const daily = stats.daily || [];
+      const s = stats.summary || {};
+
+      const labels = daily.map(d => d.tgl);
+      const counts = daily.map(d => d.jumlah);
+
+      if (dailyChartInstance) dailyChartInstance.destroy();
+      dailyChartInstance = new Chart($('dailyChart'), {
+        type: 'bar',
+        data: {
+          labels: labels.length ? labels : ['Belum ada data'],
+          datasets: [{
+            label: 'Konversi per hari',
+            data: labels.length ? counts : [0],
+            backgroundColor: '#1a73e8',
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { beginAtZero: true, ticks: { stepSize: 1 } },
+            x: { ticks: { maxTicksLimit: 7 } }
+          }
+        }
+      });
+
+      const pieLabels = ['Berhasil', 'Gagal', 'Rusak', 'Kosong'];
+      const pieData = [s.berhasil || 0, s.gagal || 0, s.rusak || 0, s.kosong || 0];
+      const pieColors = ['#188038', '#c5221f', '#e65100', '#1565c0'];
+
+      if (pieChartInstance) pieChartInstance.destroy();
+      pieChartInstance = new Chart($('pieChart'), {
+        type: 'doughnut',
+        data: {
+          labels: pieLabels,
+          datasets: [{
+            data: pieData,
+            backgroundColor: pieColors,
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'right', labels: { boxWidth: 12, padding: 8, font: { size: 11 } } }
+          }
+        }
+      });
+    }
+
+    function renderTable(activities) {
+      const tbody = $('activityTableBody');
+      const empty = $('activityEmpty');
+
+      if (!activities || activities.length === 0) {
+        tbody.innerHTML = '';
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+
+      tbody.innerHTML = activities.map(a => {
+        const tgl = a.created_at ? new Date(a.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+    const upBtn = a.status === 'BERHASIL'
+      ? (a.text_uploaded
+          ? `<button class="btn-action btn-detail-green" onclick="openDetailModal(${a.id})">Detail</button>`
+          : `<button class="btn-action btn-upload" onclick="uploadToDb(${a.id}, this)">Upload ke DB</button>`)
+      : `<button class="btn-action btn-detail" onclick="showDetail(${a.id})">Detail</button>`;
+        return `<tr>
+          <td style="white-space:nowrap">${tgl}</td>
+          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(a.file_name)}">${escHtml(a.file_name)}</td>
+          <td>${a.file_type ? `<span class="badge ${a.file_type === 'TEXT' ? 'badge-text' : 'badge-scan'}">${a.file_type}</span>` : '-'}</td>
+          <td>${statusBadge(a.status)}</td>
+          <td>${a.page_count || 0}</td>
+          <td>${a.duration_seconds ? a.duration_seconds + ' dtk' : '-'}</td>
+          <td>${upBtn}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function uploadToDb(id, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Menyimpan...';
+      try {
+        const res = await fetch(`/api/activities/${id}/upload`, { method: 'PUT' });
+        const data = await res.json();
+        if (data.duplicate) {
+          btn.textContent = 'Duplikat!';
+          btn.className = 'btn-action btn-detail';
+          setTimeout(() => { btn.textContent = 'Upload ke DB'; btn.className = 'btn-action btn-upload'; btn.disabled = false; }, 2500);
+          alert('Gagal: ' + data.error + ' (ID: ' + data.existingId + ')');
+        } else if (data.success) {
+          btn.className = 'btn-action btn-upload uploaded';
+          btn.textContent = 'Sudah diupload';
+        } else {
+          btn.textContent = 'Gagal!';
+          setTimeout(() => { btn.textContent = 'Upload ke DB'; btn.disabled = false; }, 2000);
+        }
+      } catch (e) {
+        btn.textContent = 'Gagal!';
+        setTimeout(() => { btn.textContent = 'Upload ke DB'; btn.disabled = false; }, 2000);
+      }
+    }
+
+    async function showDetail(id) {
+      try {
+        const res = await fetch(`/api/activities/${id}`);
+        const a = await res.json();
+        if (!a) { alert('Data tidak ditemukan'); return; }
+        const msg = `Detail Aktivitas\n\nFile: ${a.file_name}\nTipe: ${a.file_type || '-'}\nStatus: ${a.status}\nHalaman: ${a.page_count}\nDurasi: ${a.duration_seconds || '-'} dtk\nOCR: ${a.ocr_status || '-'}\nError: ${a.error_message || '-'}\nUploaded: ${a.text_uploaded ? 'Ya' : 'Belum'}`;
+        alert(msg);
+      } catch (e) {
+        alert('Gagal memuat detail');
+      }
+    }
+
+    async function openDetailModal(id) {
+      try {
+        const res = await fetch(`/api/activities/${id}`);
+        const a = await res.json();
+        if (!a) { alert('Data tidak ditemukan'); return; }
+
+        $('modalTitle').textContent = a.file_name;
+        $('modalMeta').innerHTML = `
+          <div class="modal-meta-item"><div class="label">Status</div><div class="value">${statusBadge(a.status)}</div></div>
+          <div class="modal-meta-item"><div class="label">Tipe</div><div class="value">${a.file_type || '-'}</div></div>
+          <div class="modal-meta-item"><div class="label">Halaman</div><div class="value">${a.page_count || 0}</div></div>
+          <div class="modal-meta-item"><div class="label">Durasi</div><div class="value">${a.duration_seconds ? a.duration_seconds + ' dtk' : '-'}</div></div>
+          <div class="modal-meta-item"><div class="label">Sumber</div><div class="value">${a.source_type === 'url' ? 'URL' : 'Upload'}</div></div>
+          <div class="modal-meta-item"><div class="label">Diupload ke DB</div><div class="value">${a.text_uploaded ? 'Ya' : 'Belum'}</div></div>
+        `;
+        $('modalText').textContent = a.output_text || '(tidak ada teks)';
+        $('detailModal').style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+      } catch (e) {
+        alert('Gagal memuat detail: ' + e.message);
+      }
+    }
+
+    function closeDetailModal() {
+      $('detailModal').style.display = 'none';
+      document.body.style.overflow = '';
+    }
+
+    function closeDetailModalOutside(event) {
+      if (event.target === $('detailModal')) closeDetailModal();
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && $('detailModal').style.display === 'flex') closeDetailModal();
+    });
   </script>
+
+  <div class="modal-overlay" id="detailModal" style="display:none" onclick="closeDetailModalOutside(event)">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <span id="modalTitle">Detail Aktivitas</span>
+        <button class="modal-close" onclick="closeDetailModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-meta" id="modalMeta"></div>
+        <h4>Hasil Teks</h4>
+        <pre class="modal-text" id="modalText"></pre>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
