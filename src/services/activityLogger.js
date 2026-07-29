@@ -31,7 +31,7 @@ async function initDatabase() {
     });
 
     await initPool.execute(
-      `CREATE DATABASE IF NOT EXISTS \`${config.db.name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+      `CREATE DATABASE IF NOT EXISTS \`${config.db.name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
     );
     await initPool.end();
 
@@ -64,8 +64,12 @@ async function initDatabase() {
     `);
 
     try {
-      await p.execute(`ALTER TABLE conversion_activities ADD COLUMN file_hash VARCHAR(64) DEFAULT NULL AFTER source_url, ADD INDEX idx_file_hash (file_hash)`);
-    } catch (_) {}
+      await p.execute(
+        `ALTER TABLE conversion_activities ADD COLUMN file_hash VARCHAR(64) DEFAULT NULL AFTER source_url, ADD INDEX idx_file_hash (file_hash)`,
+      );
+    } catch (_) {
+      /* kolom sudah ada — abaikan */
+    }
 
     logger.info('Database siap');
   } catch (error) {
@@ -97,7 +101,7 @@ async function logActivity(data) {
         data.duration_seconds || null,
         data.status,
         data.error_message || null,
-      ]
+      ],
     );
     return result.insertId;
   } catch (error) {
@@ -109,10 +113,7 @@ async function logActivity(data) {
 async function uploadTextToDb(id, text) {
   try {
     const p = await getPool();
-    await p.execute(
-      `UPDATE conversion_activities SET output_text = ?, text_uploaded = 1 WHERE id = ?`,
-      [text, id]
-    );
+    await p.execute(`UPDATE conversion_activities SET output_text = ?, text_uploaded = 1 WHERE id = ?`, [text, id]);
     return true;
   } catch (error) {
     logger.error(`Gagal upload teks ke DB: ${error.message}`);
@@ -129,8 +130,9 @@ async function getActivities() {
               duration_seconds, status, error_message, text_uploaded,
               created_at, updated_at
        FROM conversion_activities
+       WHERE output_text IS NOT NULL
        ORDER BY created_at DESC
-       LIMIT 200`
+       LIMIT 200`,
     );
     return rows;
   } catch (error) {
@@ -148,7 +150,7 @@ async function getActivityById(id) {
               duration_seconds, status, error_message, output_text, text_uploaded,
               created_at, updated_at
        FROM conversion_activities WHERE id = ?`,
-      [id]
+      [id],
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
@@ -170,12 +172,14 @@ async function getStats() {
         SUM(CASE WHEN text_uploaded = 1 THEN 1 ELSE 0 END) AS uploaded,
         ROUND(AVG(CASE WHEN duration_seconds IS NOT NULL THEN duration_seconds ELSE NULL END), 1) AS rata_durasi
       FROM conversion_activities
+      WHERE output_text IS NOT NULL
     `);
 
     const [dailyRows] = await p.execute(`
       SELECT DATE(created_at) AS tgl, COUNT(*) AS jumlah
       FROM conversion_activities
       WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      AND output_text IS NOT NULL
       GROUP BY DATE(created_at)
       ORDER BY tgl ASC
     `);
@@ -183,7 +187,10 @@ async function getStats() {
     return { summary: rows[0], daily: dailyRows };
   } catch (error) {
     logger.error(`Gagal ambil statistik: ${error.message}`);
-    return { summary: { total: 0, berhasil: 0, gagal: 0, rusak: 0, kosong: 0, uploaded: 0, rata_durasi: null }, daily: [] };
+    return {
+      summary: { total: 0, berhasil: 0, gagal: 0, rusak: 0, kosong: 0, uploaded: 0, rata_durasi: null },
+      daily: [],
+    };
   }
 }
 
@@ -193,7 +200,7 @@ async function checkDuplicateByUrl(url) {
     const [rows] = await p.execute(
       `SELECT id, file_name FROM conversion_activities
        WHERE source_url = ? AND status = 'BERHASIL' LIMIT 1`,
-      [url]
+      [url],
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
@@ -207,8 +214,8 @@ async function checkDuplicateByHash(hash) {
     const p = await getPool();
     const [rows] = await p.execute(
       `SELECT id, file_name FROM conversion_activities
-       WHERE file_hash = ? AND status = 'BERHASIL' LIMIT 1`,
-      [hash]
+       WHERE file_hash = ? AND status = 'BERHASIL' AND output_text IS NOT NULL LIMIT 1`,
+      [hash],
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
@@ -217,27 +224,91 @@ async function checkDuplicateByHash(hash) {
   }
 }
 
-async function checkDuplicateUpload(activity) {
+async function getReportData(startDate, endDate) {
   try {
     const p = await getPool();
-    let rows;
-    if (activity.source_type === 'url' && activity.source_url) {
-      [rows] = await p.execute(
-        `SELECT id, file_name FROM conversion_activities
-         WHERE id != ? AND source_url = ? AND output_text IS NOT NULL LIMIT 1`,
-        [activity.id, activity.source_url]
-      );
-    } else if (activity.file_hash) {
-      [rows] = await p.execute(
-        `SELECT id, file_name FROM conversion_activities
-         WHERE id != ? AND file_hash = ? AND output_text IS NOT NULL LIMIT 1`,
-        [activity.id, activity.file_hash]
-      );
+    let dateFilter = '';
+    const params = [];
+    if (startDate) {
+      dateFilter += ' AND DATE(created_at) >= ?';
+      params.push(startDate);
     }
-    return rows && rows.length > 0 ? rows[0] : null;
+    if (endDate) {
+      dateFilter += ' AND DATE(created_at) <= ?';
+      params.push(endDate);
+    }
+
+    const [summaryRows] = await p.execute(
+      `
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN status = 'BERHASIL' THEN 1 ELSE 0 END) AS berhasil,
+        SUM(CASE WHEN status = 'GAGAL' THEN 1 ELSE 0 END) AS gagal,
+        SUM(CASE WHEN status = 'RUSAK' THEN 1 ELSE 0 END) AS rusak,
+        SUM(CASE WHEN status = 'KOSONG' THEN 1 ELSE 0 END) AS kosong,
+        SUM(CASE WHEN text_uploaded = 1 THEN 1 ELSE 0 END) AS uploaded,
+        SUM(CASE WHEN text_uploaded = 0 AND status = 'BERHASIL' THEN 1 ELSE 0 END) AS belum_uploaded,
+        ROUND(AVG(CASE WHEN duration_seconds IS NOT NULL THEN duration_seconds ELSE NULL END), 1) AS rata_durasi
+      FROM conversion_activities
+      WHERE 1=1${dateFilter}
+    `,
+      params,
+    );
+
+    const [dailyRows] = await p.execute(
+      `
+      SELECT DATE(created_at) AS tgl,
+             COUNT(*) AS jumlah,
+             SUM(CASE WHEN text_uploaded = 1 THEN 1 ELSE 0 END) AS uploaded
+      FROM conversion_activities
+      WHERE 1=1${dateFilter}
+      GROUP BY DATE(created_at)
+      ORDER BY tgl ASC
+    `,
+      params,
+    );
+
+    const [details] = await p.execute(
+      `
+      SELECT id, session_id, file_name, original_name, source_type, source_url,
+             file_type, ocr_status, page_count, file_size_bytes,
+             duration_seconds, status, error_message, text_uploaded,
+             created_at
+      FROM conversion_activities
+      WHERE 1=1${dateFilter}
+      ORDER BY created_at DESC
+    `,
+      params,
+    );
+
+    return { summary: summaryRows[0], daily: dailyRows, details };
   } catch (error) {
-    logger.error(`Gagal cek duplikat upload: ${error.message}`);
-    return null;
+    logger.error(`Gagal ambil data laporan: ${error.message}`);
+    return {
+      summary: {
+        total: 0,
+        berhasil: 0,
+        gagal: 0,
+        rusak: 0,
+        kosong: 0,
+        uploaded: 0,
+        belum_uploaded: 0,
+        rata_durasi: null,
+      },
+      daily: [],
+      details: [],
+    };
+  }
+}
+
+async function deleteActivity(id) {
+  try {
+    const p = await getPool();
+    await p.execute(`DELETE FROM conversion_activities WHERE id = ?`, [id]);
+    return true;
+  } catch (error) {
+    logger.error(`Gagal hapus aktivitas ${id}: ${error.message}`);
+    return false;
   }
 }
 
@@ -250,5 +321,6 @@ module.exports = {
   getStats,
   checkDuplicateByUrl,
   checkDuplicateByHash,
-  checkDuplicateUpload,
+  getReportData,
+  deleteActivity,
 };

@@ -3,3 +3,6 @@ output/
 logs/
 uploads/
 .env
+sidecar/__pycache__/
+sidecar/*.pyc
+sidecar/.paddleocr/

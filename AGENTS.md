@@ -1,66 +1,73 @@
 # AGENTS.md — jdi-document-converter
 
+> Panduan agent untuk coding assistant. Changelog history ada di bagian bawah.
+
 ## Arsitektur
-- **CLI** (`app.js`) — batch dari `data/links.json`, **TIDAK** memanggil `rebuildDocumentStructure()` — berhenti setelah `cleanText()`
-- **Web** (`server.js`) — **Express v5**, memanggil `rebuildDocumentStructure()` di `processBuffer()`
-  - `POST /process-url` — single URL, body `{url, nama?}`
-  - `POST /process-urls` — batch URL (max 20), body `{urls:[]}`
-  - `POST /process-upload` — single file upload, field name `pdf`
-  - `POST /process-uploads` — batch upload (max 20), field name `pdf`
-  - `GET /download/:file` — download `.txt` dari `config.outputDir`
-  - `GET /api/activities` — daftar aktivitas konversi
-  - `GET /api/activities/stats` — statistik + data grafik harian
-  - `GET /api/activities/:id` — detail per aktivitas
-  - `PUT /api/activities/:id/upload` — simpan teks hasil ke DB
-- **Frontend** (`public/index.html`) — 3 tab: URL PDF, Upload File, **Aktivitas** (grafik + tabel + tombol Upload per item)
-- **Database** — MySQL via `mysql2`, auto-create table di startup. DB name: `jdi_document_converter`. Schema: `database/schema.sql`. Kolom `file_hash` (SHA256) untuk deteksi duplikasi.
-- **Activity Logger** (`src/services/activityLogger.js`) — semua operasi MySQL (log activity, get stats, upload text, duplicate check)
-- Pipeline: `downloadPdf` → `detectPdfType` → `extractText` (TEXT) / `convertPdfToImages`→`performOcr` (SCAN) → `cleanText` → (`rebuildDocumentStructure` hanya di Web) → output `.txt` → **log ke DB**
 
-## CJS / ESM Hybrid
-Project CJS (`require`), tiga import ESM-only dinamis. Jangan ubah ke `require()` — error.
+| Entry | File | DB logging | `rebuildDocumentStructure` |
+|-------|------|------------|---------------------------|
+| **CLI** | `app.js` | No | No — stops after `cleanText()` |
+| **Web** | `server.js` | No — save on-demand via `POST /api/activities/save` | Yes |
 
-| File | Dynamic import |
-|---|---|
-| `src/pdf/imageConverter.js:8` | `import('pdfjs-dist/legacy/build/pdf.mjs')` |
-| `src/pdf/imageConverter.js:10` | `import('@napi-rs/canvas')` |
-| `src/ocr/engine.js:11` | `import('ppu-paddle-ocr')` |
+Pipeline: `downloadPdf` → `detectPdfType` → `extractText` (TEXT) / `convertPdfToImages→performStructuredOcr→sidecar` (SCAN) → `cleanText` → (`rebuildDocumentStructure` only Web) → output `.txt` **→ user edits text → klik "Simpan ke Database"**
 
-## Status Deteksi (File Rusak/Kosong)
-`processBuffer()` di Web memberi status: `BERHASIL`, `GAGAL`, `RUSAK`, `KOSONG`.
-- PDF 0 byte → **KOSONG**
-- `detectPdfType` / `extractText` / `convertPdfToImages` throw → **RUSAK**
-- Hasil `cleanText()` kosong → **KOSONG**
-- `downloadPdf` gagal → **GAGAL**
-- Status tampil di UI sebagai badge warna (hijau/merah/oranye/biru)
+Untuk SCAN: jika `STRUCTURE_SERVICE_URL` diset → **PP-StructureV3 sidecar** (layout-aware OCR + table recognition). Jika tidak diset atau sidecar unreachable → fallback ke `ppu-paddle-ocr` standar.
 
-Activity otomatis tercatat di DB tiap konversi. Tombol "Upload ke DB" per file membaca `.txt` dari disk (`config.outputDir`) lalu menyimpan ke kolom `output_text` di MySQL.
+## Routes (Web)
 
-## Deteksi Duplikasi
-SHA256 hash file dicek saat submit URL/file. Jika URL (untuk URL source) atau hash (untuk upload) sudah ada dengan status BERHASIL, proses ditolak (hard reject, tidak ada entry DB). Saat "Upload ke DB", dicek apakah URL/hash yang sama sudah punya `output_text` dari aktivitas lain — jika ya, upload ditolak.
-
-## Gotcha — Buffer/Uint8Array/Canvas
-`pdfjs-dist` v4 dan `ppu-paddle-ocr` minta `Uint8Array`/`Canvas`, tolak `Buffer`.
-- `imageConverter.js:18` — `new Uint8Array(buffer)` sebelum `pdfjs.getDocument()`
-- `imageConverter.js:43` — push `Canvas` langsung, hindari `toBuffer()`
-- `engine.js:29` — `recognize()` terima `Canvas` (punya `.toBuffer()`)
-- `imageConverter.js:12-16` — worker path pdfjs-dist harus di-resolve dari `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
+- `POST /process-url` — body `{url, nama?}`
+- `POST /process-urls` — body `{urls:[]}` (max 20) **SSE streaming FIFO**
+- `POST /process-upload` — multipart field `pdf`
+- `POST /process-uploads` — multipart field `pdf` (max 20) **SSE streaming FIFO**
+- `GET /download/:file` — download `.txt` dari `config.outputDir`
+- `GET /api/activities[/stats|/:id]` — activity log queries
+- `POST /api/activities/save` — simpan text + metadata ke DB (body JSON)
 
 ## Commands
+
 | Perintah | Fungsi |
 |---|---|
 | `npm start` | Web server `localhost:3000` |
 | `npm run cli` | CLI batch dari `data/links.json` |
 | `npm test` | `node --experimental-vm-modules test.js` (file belum ada) |
 
+## CJS / ESM Hybrid
+
+Project CJS (`require`), tiga import ESM-only dinamis. Jangan ubah ke `require()` — error.
+
+| File | Dynamic import |
+|---|---|
+| `src/pdf/imageConverter.js:8` | `import('pdfjs-dist/legacy/build/pdf.mjs')` |
+| `src/pdf/imageConverter.js:9` | `import('@napi-rs/canvas')` |
+| `src/ocr/engine.js:11` | `import('ppu-paddle-ocr')` |
+
+## Gotcha — Buffer/Uint8Array/Canvas
+
+`pdfjs-dist` v4 dan `ppu-paddle-ocr` minta `Uint8Array`/`Canvas`, tolak `Buffer`.
+- `imageConverter.js:18` — `new Uint8Array(buffer)` sebelum `pdfjs.getDocument()`
+- `imageConverter.js:43` — push `Canvas` langsung, hindari `toBuffer()`
+- `engine.js:29` — `recognize()` terima `Canvas` (punya `.toBuffer()`)
+- `imageConverter.js:12-16` — worker path pdfjs-dist harus di-resolve dari `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
+
+## Status & Duplikasi
+
+`processBuffer()` memberi status: `BERHASIL`, `GAGAL`, `RUSAK`, `KOSONG`.
+- PDF 0 byte → **KOSONG**; pipeline throw → **RUSAK**; `cleanText()` kosong → **KOSONG**; download gagal → **GAGAL**
+- SHA256 hash (`computeHash()`) dicek saat `POST /api/activities/save`: jika hash sudah ada DAN `output_text` sudah terisi → DUPLICATE, ditolak
+- Status & Duplikasi hanya di cek saat user klik "Simpan ke Database", tidak ada auto-insert
+- `getActivities()` / `getStats()` hanya mengembalikan data dengan `output_text IS NOT NULL` — record legacy tanpa teks tidak tampil di UI
+
 ## Konfigurasi
+
 - `.env`: `OUTPUT_DIR`, `LOG_DIR`, `MAX_RETRIES`, `RETRY_DELAY_MS`, `DOWNLOAD_TIMEOUT`, `OCR_LANG`, `PDF_RENDER_SCALE`, `PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`
-- `linksPath` dikode keras ke `./data/links.json` (`src/config/index.js:14`) — tidak dari `.env`
-- Nama file untuk URL: `extractFileNameFromUrl()` ambil segmen terakhir path URL + hapus `.pdf` + sanitasi karakter. Fallback: `doc_timestamp`
-- Nama file untuk upload: `path.parse(file.originalname).name` (tanpa ekstensi)
-- File gagal (GAGAL) tetap tercatat di DB via `activityLogger.logActivity()` di error catch
+- `linksPath` hardcoded ke `./data/links.json` (`src/config/index.js:14`) — tidak dari `.env`
+- Nama file URL: `extractFileNameFromUrl()` — last path segment, strip `.pdf`, sanitasi, max 200 chars, fallback `doc_`+timestamp. URL dengan spasi di-encode `%20` dulu lalu `decodeURIComponent()`.
+- Nama file upload: `path.parse(file.originalname).name`
+- Multer simpan upload di `uploads/`, dibersihkan setelah diproses
+- `output/`, `logs/`, `uploads/`, `node_modules/`, `.env` di gitignore
 
 ## Catatan
+
 - Semua log/komentar dalam Bahasa Indonesia
 - `data/links.json` = array `{id, url, nama}` — wajib untuk CLI
 - Retry exponential backoff: `delayMs * attempt` (`src/utils/retry.js:19`)
@@ -70,7 +77,7 @@ SHA256 hash file dicek saat submit URL/file. Jika URL (untuk URL source) atau ha
 
 ---
 
-## Changelog — 2026-07-28
+## Changelog — 2026-07-27
 
 ### ringkasan
 Menambahkan sistem database MySQL untuk mencatat aktivitas konversi, dashboard aktivitas dengan grafik di frontend, deteksi status file rusak/kosong, dan tombol "Upload ke DB" per file.
@@ -160,7 +167,7 @@ db: {
 
 ---
 
-## Changelog — 2026-07-28 (v2)
+## Changelog — 2026-07-27 (v2)
 
 ### ringkasan
 Menambahkan tombol "Upload ke DB" per item hasil konversi, tombol "Upload Semua" batch, redesign CSS menyeluruh dengan gradien, shadows, dan smooth hover.
@@ -201,7 +208,7 @@ Menambahkan tombol "Upload ke DB" per item hasil konversi, tombol "Upload Semua"
 
 ---
 
-## Changelog — 2026-07-28 (v3)
+## Changelog — 2026-07-27 (v3)
 
 ### ringkasan
 Perbaikan nama file hasil konversi (URL → ekstrak nama dari URL, bukan `doc_timestamp`) dan logging error ke database untuk file yang gagal di-download.
@@ -232,7 +239,7 @@ File yang gagal tetap tercatat di tabel Aktivitas dengan status **GAGAL** dan `e
 
 ---
 
-## Changelog — 2026-07-28 (v4)
+## Changelog — 2026-07-27 (v4)
 
 ### ringkasan
 Perbaikan URL dengan spasi (404 error), ekstraksi nama file dari URL yang mengandung spasi, dan logging GAGAL ke DB untuk rute `process-upload` (single).
@@ -352,4 +359,372 @@ Menambahkan sistem deteksi duplikasi menggunakan SHA256 hash file. Cek duplikasi
   - body DUPLICATE: tampilkan error kuning dengan `data.error` + ID existing
 - `uploadToDb()` (table): handle `data.duplicate` → button show "Duplikat", alert error
 - `uploadResultItem()` (result card): handle `data.duplicate` → button jadi outline "Duplikat", alert error
-- `uploadAllResults()`: handle `data.duplicate` → button jadi outline "Duplikat"
+- `uploadAllResults()`: handle `data.duplicate` → button jadi outline "Duplikat"  
+
+---
+
+## Changelog — 2026-07-29 (v7)
+
+### ringkasan
+Restrukturasi alur penyimpanan ke database: hapus auto-insert `logActivity()` dari `processBuffer()` dan semua error catch route. Hasil konversi ditampilkan di `<textarea>` editable, pengguna bisa mengedit teks sebelum klik "Simpan ke Database" yang memanggil `POST /api/activities/save`.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `server.js` | `logActivity()` di `processBuffer()` + semua route catches, duplicate check di submit, return `activityId` | `logActivity()` dihapus dari `processBuffer()` dan semua catch, duplicate check hanya di save route, return metadata (`sourceType`, `sourceUrl`, `fileHash`) bukan `activityId`; +route `POST /api/activities/save` |
+| `public/index.html` | `addResultItem()` show `<div class="text-output">` + Upload ke DB button, `uploadResultItem`/`uploadAllResults`/`updateUploadAllBtn`, DUPLICATE status | `addResultItem()` show `<textarea>` editable + "Simpan ke Database" button, fungsi `saveResultItem()` POST ke `/api/activities/save`, DUPLICATE status dihapus, `uploadAllBtn`/`uploadCounter` dihapus |
+| `AGENTS.md` | — | +Changelog v7 |
+
+### perubahan detail
+
+**`server.js`**
+- `processBuffer()`: hapus `activityLogger.logActivity()` — tidak lagi auto-insert ke DB
+- `processBuffer()` return objek: tambah `sourceType`, `sourceUrl`, `originalName`, `fileHash`; hapus `activityId`
+- Semua route catch block (`process-url`, `process-urls`, `process-upload`, `process-uploads`): hapus `activityLogger.logActivity()` dan return `activityId`
+- Semua duplicate check (`checkDuplicateByUrl`, `checkDuplicateByHash`) dihapus dari submission routes
+- `sessionId`/`uuidv4()` dihapus dari submission routes
+- Route baru `POST /api/activities/save`:
+  - terima `{text, file_name, source_type, source_url, ...}`
+  - cek duplikasi via `checkDuplicateByHash`
+  - create activity + `uploadTextToDb` dalam satu request
+  - return `{success, activityId}`
+
+**`public/index.html`**
+- `statusIcon()`: hapus case `DUPLICATE`
+- `statusBadge()`: hapus case `DUPLICATE`
+- `addResultItem()`:
+  - hapus `isDuplicate`, `aid`/`activityId`
+  - simpan metadata di `resultsStore` sebagai objek `meta`
+  - BERHASIL: `<textarea class="result-textarea">` editable + tombol "Simpan ke Database" (`.btn-save`)
+  - hapus `.upload-db-btn`, `updateUploadAllBtn()`, event listener upload
+- Fungsi baru:
+  - `getTextareaValue(index)` — ambil value textarea
+  - `saveResultItem(btn, index)` — POST ke `/api/activities/save`, handle success/duplicate/error
+- CSS baru: `.btn-save` (gradient ungu), `.result-textarea` (monospace, border, fokus styling)
+- Hapus: `#uploadAllBtn`, `.upload-counter`, `#uploadCounter`, fungsi `uploadResultItem()`, `uploadAllResults()`, `updateUploadAllBtn()`
+- `clearResults()`: sederhanakan — hapus referensi `uploadAllBtn`/`uploadCounter`
+
+---
+
+## Changelog — 2026-07-29 (v8)
+
+### ringkasan
+Hapus legacy `PUT /api/activities/:id/upload` route dan tombol "Upload ke DB" di tabel Aktivitas. Hanya `POST /api/activities/save` sebagai satu-satunya jalur penyimpanan ke database.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `server.js` | 12 route termasuk `PUT /api/activities/:id/upload` | 11 route — PUT route dihapus |
+| `src/services/activityLogger.js` | 11 exported functions termasuk `checkDuplicateUpload` | 10 exported functions — `checkDuplicateUpload` dihapus |
+| `public/index.html` | tabel Aktivitas: tombol "Upload ke DB" + function `uploadToDb()` + CSS `.btn-upload`/`.btn-upload-db` | tabel Aktivitas: badge "Belum disimpan" abu-abu untuk item tanpa `output_text`, function + CSS dihapus |
+| `AGENTS.md` | — | +Changelog v8, update Routes & Status section |
+
+### perubahan detail
+
+**`server.js`**
+- Hapus seluruh route `PUT /api/activities/:id/upload` (37 baris)
+- `POST /api/activities/save` tetap sebagai satu-satunya jalur masuk data ke DB
+
+**`src/services/activityLogger.js`**
+- Hapus fungsi `checkDuplicateUpload(activity)` — dead code, hanya dipakai oleh PUT route
+- Hapus dari `module.exports`
+
+**`public/index.html`**
+- `renderTable()`: BERHASIL + `text_uploaded===0` → badge `<span>Belum disimpan</span>` abu-abu (bukan tombol)
+- Hapus fungsi `uploadToDb()` — dead code
+- Hapus CSS `.btn-upload` (4 baris) dan `.btn-upload-db` (4 baris) — tidak dipakai lagi
+
+---
+
+## Changelog — 2026-07-29 (v9)
+
+### ringkasan
+Filter Aktivitas & Duplikasi — hanya menampilkan data yang benar-benar sudah disimpan ke database. Duplikasi hanya dicek terhadap record yang sudah punya `output_text`, sehingga legacy record tanpa teks tidak memblokir dan tidak muncul di UI.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/services/activityLogger.js` | `checkDuplicateByHash()` cek semua status BERHASIL; `getActivities()`/`getStats()` tanpa filter | `checkDuplicateByHash()` tambah `AND output_text IS NOT NULL`; `getActivities()`/`getStats()` filter `WHERE output_text IS NOT NULL` |
+| `public/index.html` | `renderTable()` tampilkan badge "Belum disimpan" untuk item tanpa `output_text` | "Belum disimpan" dihapus — tidak diperlukan karena data tanpa teks tidak muncul |
+| `AGENTS.md` | — | +Changelog v9, update Status section |
+
+### perubahan detail
+
+**`src/services/activityLogger.js`**
+- `checkDuplicateByHash()`: query berubah — hanya menganggap duplikat jika hash sama DAN `output_text` sudah terisi
+  ```sql
+  -- sebelum
+  WHERE file_hash = ? AND status = 'BERHASIL'
+  -- sesudah
+  WHERE file_hash = ? AND status = 'BERHASIL' AND output_text IS NOT NULL
+  ```
+- `getActivities()`: tambah `WHERE output_text IS NOT NULL` — hanya kembalikan record yang sudah disimpan
+- `getStats()`: tambah `WHERE output_text IS NOT NULL` di query summary dan daily — statistik hanya dari data tersimpan
+
+**`public/index.html`**
+- `renderTable()`: hapus badge "Belum disimpan" — semua record yang tampil sudah punya `output_text`
+
+---
+
+## Changelog — 2026-07-29 (v10)
+
+### ringkasan
+Migrasi batch processing dari response JSON array ke **SSE streaming FIFO**. Setiap file dikirim ke frontend segera setelah selesai dikonversi, tanpa menunggu seluruh batch. Perbaikan bug `req.on('close')` yang menyebabkan loop berhenti setelah file pertama.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `server.js` | 2 route batch kirim `res.json({results})` setelah semua selesai | 2 route SSE streaming: tiap file selesai → `res.write(event + data)` langsung, `res.on('close')` untuk deteksi disconnect |
+| `public/index.html` | `processUrls()/processFiles()` baca `res.json()` lalu `forEach` | `processUrls()/processFiles()` baca `ReadableStream` via `readSSEStream()` — parse event per-event real-time |
+| `AGENTS.md` | — | +Changelog v10, update Routes section |
+
+### perubahan detail
+
+**`server.js`**
+- Route `/process-urls` (batch): ganti dari kumpul array → SSE streaming FIFO:
+  - `res.writeHead(200, {'Content-Type':'text/event-stream', ...})` + `res.socket.setNoDelay(true)`
+  - Loop FIFO: `progress` → `processBuffer()` → `result`/`error` → `done`
+  - deteksi disconnect: `res.on('close')` bukan `req.on('close')`
+- Route `/process-uploads` (batch): perubahan identik
+- Single routes `/process-url`, `/process-upload` tetap tidak berubah
+
+**`public/index.html`**
+- fungsi baru `readSSEStream(response, callbacks)`:
+  - baca `response.body.getReader()` via `ReadableStream`
+  - akumulasi buffer, split `\n\n`, parse `event:`/`data:`, dispatch ke callback
+- `processUrls()`: pakai `readSSEStream` dengan callback `progress`/`result`/`error`/`done`
+- `processFiles()`: sama
+
+### Data flow
+
+```
+Sebelum (batch):
+  Server: for each file → results[] → res.json({results})
+  Client: res.json() → forEach → addResultItem
+
+Sesudah (SSE streaming):
+  Server: for each file → res.write(event:result) langsung
+  Client: reader.read() → parse SSE → addResultItem per event
+```
+
+---
+
+## Changelog — 2026-07-29 (v11)
+
+### ringkasan
+Menambahkan 4 infrastruktur pengembangan: test file unit (47 tests), linter (ESLint) + formatter (Prettier), CI/CD (GitHub Actions), dan Docker (Dockerfile + docker-compose).
+
+### file baru/diubah
+
+| File | keterangan |
+|---|---|
+| `test.js` (baru) | 47 unit test: config, cleanText, DocumentStructureRebuilder, withRetry, computeHash, extractFileNameFromUrl, integrasi |
+| `.eslintrc.json` (baru) | ESLint config — env node/commonjs/es2022, extends recommended |
+| `.prettierrc` (baru) | Prettier config — singleQuote, trailingComma all, printWidth 120 |
+| `.github/workflows/ci.yml` (baru) | GitHub Actions — matrix Node 18/20, lint + test |
+| `Dockerfile` (baru) | Node 20-slim, tini entrypoint, port 3000 |
+| `.dockerignore` (baru) | node_modules, output, logs, uploads, .env, .git |
+| `docker-compose.yml` (baru) | App + MySQL 8, healthcheck, volume persistensi |
+| `package.json` | + devDependencies (eslint 8, prettier 3), + scripts (`lint`, `lint:fix`, `format`, `format:check`) |
+| `src/utils/textCleaner.js` | fix order: replacement rules sebelum character filter; split smart quotes regex `[""]` dan `['']` |
+| `src/utils/DocumentStructureRebuilder.js` | fix regex: hapus unnecessary escape `\.` dan `\)` |
+| `server.js` | fix: `fmtDate()` pindah ke const arrow function, hoist sebelum if block |
+| `src/services/activityLogger.js` | fix: tambah komentar di empty catch block |
+
+### perubahan detail
+
+**`test.js`** — baru
+- Helper `test()` sinkron + `testAsync()` async dengan counter passed/failed
+- **Config** (8 tests): outputDir, logDir, maxRetries, retryDelayMs, db config
+- **cleanText** (14 tests): empty/null/undefined, collapse spaces/newlines, bullet `•`, smart quotes `""`/`''`, en/em dash, heading BAB/Pasal, Latin/Cyrillic, control chars
+- **DocumentStructureRebuilder** (10 tests): empty, BAB, Pasal, Ayat numbering, Bagian, Paragraf, indent hierarchy, newline collapse
+- **withRetry** (4 tests): first-try success, retry success, all retries fail, custom options
+- **computeHash** (4 tests): empty buffer, known string, 64-char hex, uniqueness
+- **extractFileNameFromUrl** (10 tests): .pdf strip, multi-segment, spaces, special chars, truncation 200 chars, invalid URL, domain-only fallback
+- **Integrasi** (1 test): full pipeline cleanText → rebuildDocumentStructure untuk teks hukum Indonesia
+- Exit code: `0` jika semua passed, `1` jika ada failed
+
+**`textCleaner.js`** — fix order + split regex
+- Pindahkan replacement rules (bullet, smart quotes, dash) SEBELUM character filter — bullet/quote/dash characters sekarang diganti dulu baru difilter
+- Split regex smart quotes: `[“”]` → `"`, `[‘’]` → `'` (sebelumnya semua diganti `"`)
+
+**`Dockerfile`**
+- Base: `node:20-slim` — Debian-based, kompatibel dengan native modules (`@napi-rs/canvas`, `onnxruntime-node`)
+- `tini` sebagai init process (SIGTERM handling)
+- `npm ci --only=production` — install hanya production dependencies
+- `mkdir -p output logs uploads` — direktori runtime
+- `EXPOSE 3000`
+
+**`docker-compose.yml`**
+- Service `app`: build dari Dockerfile, port 3000, environment variables dari `.env`, volume `app_output` + `app_logs`, restart unless-stopped
+- Service `db`: MySQL 8, healthcheck (mysqladmin ping), volume `mysql_data`, port 3307:3306
+- `depends_on` dengan `condition: service_healthy` — app menunggu MySQL siap
+- charset utf8mb4 + collation utf8mb4_unicode_ci
+
+**`.github/workflows/ci.yml`**
+- Trigger: push / pull_request ke `main`
+- Matrix: Node.js 18 dan 20
+- Steps: checkout → setup-node (dengan cache) → npm ci → npm run lint → npm test
+- `NODE_OPTIONS: --experimental-vm-modules` diset di env test
+
+---
+
+## Changelog — 2026-07-29 (v13)
+
+### ringkasan
+Menambahkan **Python sidecar** berbasis PP-StructureV3 untuk layout-aware OCR dan table recognition. Sidecar mendeteksi struktur halaman, mengenali tabel, dan mengembalikan HTML tabel yang diformat. Jika sidecar tidak tersedia, pipeline fallback ke `ppu-paddle-ocr` standar.
+
+### file baru
+
+| File | keterangan |
+|---|---|
+| `sidecar/main.py` | FastAPI app — endpoint `POST /analyze`: terima base64 images, return text + table HTML per halaman. Inisialisasi `PPStructure` dari PaddleOCR |
+| `sidecar/requirements.txt` | Python dependencies: fastapi, uvicorn, paddlepaddle, paddleocr, Pillow, numpy |
+| `sidecar/Dockerfile` | Python 3.10-slim, install system deps (libgl, libgomp), pip install requirements, port 5000 |
+| `src/services/structureService.js` | HTTP client ke sidecar: `performStructuredOcr(images, onProgress)` → convert Canvas ke base64 → kirim POST → parse response → format tabel. Fallback ke `performOcr()` jika sidecar unreachable |
+| `src/utils/tableFormatter.js` | `formatTableHtmlToText(html)` — parse HTML tabel (`<tr>`, `<td>`, `<th>`) → render sebagai tabel ASCII dengan kolom rata dan border `+---+---+` |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `server.js` | import `performOcr` | + import `performStructuredOcr`; SCAN branch: jika `config.structureServiceUrl` ada → pakai `performStructuredOcr`, fallback ke `performOcr` |
+| `src/config/index.js` | 6 properti + `db` | + `structureServiceUrl`, `sidecarTimeout` |
+| `.env` | 30 baris | + `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT` |
+| `docker-compose.yml` | 2 services (app + db), 3 volumes | + service `sidecar:5000`, env `STRUCTURE_SERVICE_URL=http://sidecar:5000`, volume `sidecar_cache` |
+| `.gitignore` | 5 baris | + `sidecar/__pycache__/`, `*.pyc`, `.paddleocr/` |
+| `AGENTS.md` | — | +Changelog v13 |
+
+### arsitektur
+
+```
+server.js (Node.js)
+  │
+  ├─ /process-urls → downloadPdf → detectPdfType → processBuffer
+  │     ├─ TEXT → pdf-parse (existing)
+  │     └─ SCAN → convertPdfToImages
+  │                ├─ [config.structureServiceUrl] → performStructuredOcr
+  │                │     └─ POST /analyze → sidecar (port 5000)
+  │                │           ├─ PP-StructureV3 (layout + table)
+  │                │           └─ return {text, tables: [{html}]}
+  │                └─ [fallback] → performOcr (ppu-paddle-ocr existing)
+  │
+  └─ Python sidecar (sidecar/main.py)
+       FastAPI → POST /analyze ← base64 images
+       ├─ PPStructure engine (PaddleOCR)
+       ├─ layout detection → text blocks
+       ├─ table recognition → HTML tables
+       └─ return JSON [{page, text, tables}]
+```
+
+### detail
+
+**`sidecar/main.py`**
+- `POST /analyze` menerima `{images: [base64], lang: "id"}`
+- Setiap image di-decode → numpy array → `engine(img_array)` dari PPStructure
+- Hasil per item: jika `type == "table"` → simpan `res.html`, jika `type == "text"` → simpan `res.text`
+- `GET /health` — health check
+- Environment: `OCR_LANG`, `USE_GPU` (default CPU)
+
+**`src/services/structureService.js`**
+- `performStructuredOcr(images, onProgress)`: wrapper dengan auto-fallback
+- Jika `config.structureServiceUrl` kosong → langsung `performOcr()`
+- Jika sidecar timeout/error → catch → log warning → `performOcr()`
+- Canvas dikonversi ke base64 PNG via `canvas.toBuffer('image/png')`
+- Timeout: `config.sidecarTimeout` (default 120 detik)
+
+**`src/utils/tableFormatter.js`**
+- `formatTableHtmlToText(html)`: parse `<tr>`, `<td>`, `<th>` → ekstrak teks → hitung lebar kolom → render tabel ASCII
+- Multi-line cell support (text wrapping per kolom)
+- Output tabel dengan border `+---+---+` dan pemisah baris
+
+### fallback behavior
+- Sidecar tidak di-set (`STRUCTURE_SERVICE_URL` kosong) → OCR standar `ppu-paddle-ocr`
+- Sidecar tidak reachable (connection refused) → log warning → OCR standar
+- Sidecar timeout → log warning → OCR standar
+- Sidecar error per halaman → halaman tersebut return text kosong, halaman lain tetap diproses
+
+---
+
+## Changelog — 2026-07-29 (v14)
+
+### ringkasan
+Menambahkan garbage filter untuk membersihkan output tabel OCR yang berantakan (isolated chars + digits), error handling per halaman di imageConverter dan engine, serta 9 unit test baru.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/utils/textCleaner.js` | `cleanText()` tanpa filter tabel | + `isTableGarbage(line)` + `filterTableGarbage(text)` — deteksi dan hapus blok sampah tabel dari akhir teks |
+| `src/pdf/imageConverter.js` | page.render() error → throw, abort seluruh dokumen | try/catch per page → render gagal → push Canvas 1×1 kosong (skip) |
+| `src/ocr/engine.js` | recognize() error → throw, abort | try/catch per page → OCR gagal → push string kosong `''` |
+| `test.js` | 50 tests | +9 tests: `isTableGarbage`, `filterTableGarbage`, real document scenario = 59 tests |
+
+### perubahan detail
+
+**`src/utils/textCleaner.js`**
+- Fungsi baru `isTableGarbage(line)`:
+  - Skip line pendek (≤ 3 kata): return `false`
+  - Hitung digit count + word count
+  - Jika digitPct > 0.25 DAN wordLength < 4 untuk > 60% kata → **garbage**
+  - Cek khusus: jika ada kata panjang (≥ 6 chars) → **not garbage** (false positive protection)
+- Fungsi baru `filterTableGarbage(text)`:
+  - Scan dari akhir teks, cari blok kontigu baris garbage di bagian bawah
+  - Potong semua baris dari `garbageStart` sampai akhir
+  - Filter sisa baris garbage yang terisolasi di bagian atas
+- `cleanText()`: panggil `filterTableGarbage()` setelah replacement rules, sebelum heading detection
+
+**`src/pdf/imageConverter.js`**
+- Per-page try/catch di loop `convertPdfToImages()`:
+  ```js
+  try {
+    const page = await pdfDoc.getPage(i + 1);
+    // ... render
+  } catch (err) {
+    console.warn(`Halaman ${i + 1} gagal dirender: ${err.message}. Skipping.`);
+    const blank = new Canvas(1, 1);
+    pages.push(blank);
+  }
+  ```
+
+**`src/ocr/engine.js`**
+- Per-page try/catch di loop `performOcr()`:
+  ```js
+  try {
+    const result = await ocrEngine.recognize(canvas, lang);
+    // ...
+  } catch (err) {
+    console.warn(`OCR halaman ${i + 1} gagal: ${err.message}. Skipping.`);
+    results.push('');
+  }
+  ```
+
+**`test.js`**
+- 9 test baru di section `=== 9. tableGarbageFilter ===`:
+  - `clean legal text not garbage` — "Bupati adalah Bupati Dairi" → false
+  - `short line not garbage` — "Bupati" (1 word) → false
+  - `isolated char soup is garbage` — "N M M 1 I I I I 1 I I F 8" → true
+  - `digit line with spaces is garbage` — "7 0 0 0 0 1 9 0 1" → true
+  - `legal text with numbers not garbage` — "1. Undang-Undang..." → false
+  - `number with description not garbage` — "30% (tiga puluh persen)" → false
+  - `filter removes trailing garbage block` — clean text + garbage → hanya clean
+  - `filter keeps clean text unchanged` — teks bersih tidak berubah
+  - `real document ending with lampiran garbage` — dokumen legal + sampah tabel → dokumen utuh
+
+### Garbage filter logic
+
+```
+Input line → split by spaces → count words/digits
+  ↓
+if word count ≤ 3 → NOT garbage (short line, e.g. "Pasal 1")
+if digit percentage > 0.25 AND most words are short (< 4 chars) → GARBAGE
+if any word ≥ 6 chars → NOT GARBAGE (has meaningful text)
+```
+
+### Per-page error handling
+Sebelumnya: satu halaman gagal render/OCR → seluruh dokumen gagal.
+Sesudahnya: halaman gagal di-skip (blank canvas / string kosong), halaman lain diproses normal.

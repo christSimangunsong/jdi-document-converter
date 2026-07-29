@@ -26,7 +26,7 @@ async function downloadPdf(url) {
       maxRetries: config.maxRetries,
       delayMs: config.retryDelayMs,
       label: `Download ${url}`,
-    }
+    },
   );
 
   return Buffer.from(response.data);

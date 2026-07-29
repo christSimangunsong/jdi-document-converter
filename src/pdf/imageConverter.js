@@ -11,7 +11,9 @@ async function convertPdfToImages(buffer) {
 
   const workerPath = path.join(
     path.dirname(require.resolve('pdfjs-dist/package.json')),
-    'legacy', 'build', 'pdf.worker.mjs'
+    'legacy',
+    'build',
+    'pdf.worker.mjs',
   );
   pdfjs.GlobalWorkerOptions.workerSrc = url.pathToFileURL(workerPath).href;
 
@@ -23,26 +25,31 @@ async function convertPdfToImages(buffer) {
   logger.info(`  Merender ${pageCount} halaman ke gambar...`);
 
   for (let i = 1; i <= pageCount; i++) {
-    const page = await doc.getPage(i);
-    const viewport = page.getViewport({ scale: config.pdfRenderScale });
+    try {
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale: config.pdfRenderScale });
 
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const ctx = canvas.getContext('2d');
+      const canvas = createCanvas(viewport.width, viewport.height);
+      const ctx = canvas.getContext('2d');
 
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, viewport.width, viewport.height);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, viewport.width, viewport.height);
 
-    const renderContext = {
-      canvasContext: ctx,
-      viewport,
-    };
+      const renderContext = {
+        canvasContext: ctx,
+        viewport,
+      };
 
-    await page.render(renderContext).promise;
-    page.cleanup();
+      await page.render(renderContext).promise;
+      page.cleanup();
 
-    images.push(canvas);
-
-    logger.info(`  Halaman ${i}/${pageCount} selesai di-render`);
+      images.push(canvas);
+      logger.info(`  Halaman ${i}/${pageCount} selesai di-render`);
+    } catch (error) {
+      logger.warn(`  Halaman ${i}/${pageCount} gagal di-render: ${error.message}. Dilewati.`);
+      const blank = createCanvas(1, 1);
+      images.push(blank);
+    }
   }
 
   await doc.cleanup();

@@ -3,14 +3,11 @@ const { withRetry } = require('../utils/retry');
 const config = require('../config');
 
 async function extractText(buffer) {
-  const data = await withRetry(
-    () => pdfParse(buffer),
-    {
-      maxRetries: config.maxRetries,
-      delayMs: config.retryDelayMs,
-      label: 'Ekstrak teks PDF',
-    }
-  );
+  const data = await withRetry(() => pdfParse(buffer), {
+    maxRetries: config.maxRetries,
+    delayMs: config.retryDelayMs,
+    label: 'Ekstrak teks PDF',
+  });
 
   return {
     text: data.text || '',

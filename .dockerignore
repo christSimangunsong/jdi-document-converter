@@ -1,0 +1,9 @@
+node_modules/
+output/
+logs/
+uploads/
+.env
+.git
+.gitignore
+AGENTS.md
+data/

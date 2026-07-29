@@ -33,7 +33,7 @@ async function ocrImage(imageBuffer) {
       maxRetries: config.maxRetries,
       delayMs: config.retryDelayMs,
       label: 'OCR halaman',
-    }
+    },
   );
 
   return result;
@@ -64,9 +64,14 @@ async function performOcr(imageBuffers, onProgress) {
 
   for (let i = 0; i < imageBuffers.length; i++) {
     logger.info(`  OCR halaman ${i + 1}/${imageBuffers.length}...`);
-    const result = await ocrImage(imageBuffers[i]);
-    const pageText = formatOcrResult(result);
-    results.push(pageText);
+    try {
+      const result = await ocrImage(imageBuffers[i]);
+      const pageText = formatOcrResult(result);
+      results.push(pageText);
+    } catch (error) {
+      logger.warn(`  OCR halaman ${i + 1} gagal: ${error.message}. Dilewati.`);
+      results.push('');
+    }
 
     if (onProgress) {
       onProgress(i + 1, imageBuffers.length);

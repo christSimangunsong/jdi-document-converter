@@ -6,7 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "cli": "node app.js",
-    "test": "node --experimental-vm-modules test.js"
+    "test": "node --experimental-vm-modules test.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{js,json,css,html}\"",
+    "format:check": "prettier --check \"**/*.{js,json,css,html}\""
   },
   "keywords": [
     "jdiih",
@@ -16,11 +20,16 @@
     "paddleocr"
   ],
   "license": "MIT",
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "prettier": "^3.4.0"
+  },
   "dependencies": {
     "@napi-rs/canvas": "^1.0.0",
     "axios": "^1.7.0",
     "cli-progress": "^3.12.0",
     "dotenv": "^16.4.0",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "fs-extra": "^11.2.0",
     "multer": "^2.2.0",

@@ -12,6 +12,8 @@ const config = {
   ocrLang: process.env.OCR_LANG || 'id',
   pdfRenderScale: parseFloat(process.env.PDF_RENDER_SCALE) || 2.0,
   linksPath: path.resolve('./data/links.json'),
+  structureServiceUrl: process.env.STRUCTURE_SERVICE_URL || '',
+  sidecarTimeout: parseInt(process.env.SIDECAR_TIMEOUT, 10) || 120000,
   db: {
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',

@@ -11,7 +11,7 @@ const logger = createLogger({
     format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     format.printf(({ timestamp, level, message }) => {
       return `[${timestamp}] [${level.toUpperCase()}] ${message}`;
-    })
+    }),
   ),
   transports: [
     new transports.Console({
@@ -20,7 +20,7 @@ const logger = createLogger({
         format.timestamp({ format: 'HH:mm:ss' }),
         format.printf(({ timestamp, level, message }) => {
           return `[${timestamp}] [${level}] ${message}`;
-        })
+        }),
       ),
     }),
     new transports.File({

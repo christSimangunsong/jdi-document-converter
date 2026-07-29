@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - OUTPUT_DIR=/app/output
+      - LOG_DIR=/app/logs
+      - DB_HOST=db
+      - DB_USER=${DB_USER:-root}
+      - DB_PASSWORD=${DB_PASSWORD:-rootpassword}
+      - DB_NAME=${DB_NAME:-jdi_document_converter}
+      - DB_PORT=3306
+      - MAX_RETRIES=${MAX_RETRIES:-3}
+      - RETRY_DELAY_MS=${RETRY_DELAY_MS:-2000}
+      - DOWNLOAD_TIMEOUT=${DOWNLOAD_TIMEOUT:-60000}
+      - OCR_LANG=${OCR_LANG:-id}
+      - PDF_RENDER_SCALE=${PDF_RENDER_SCALE:-2.0}
+      - STRUCTURE_SERVICE_URL=http://sidecar:5000
+      - SIDECAR_TIMEOUT=120000
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - app_output:/app/output
+      - app_logs:/app/logs
+    restart: unless-stopped
+
+  sidecar:
+    build: ./sidecar
+    ports:
+      - "5000:5000"
+    environment:
+      - OCR_LANG=${OCR_LANG:-id}
+      - USE_GPU=${USE_GPU:-0}
+    volumes:
+      - sidecar_cache:/root/.paddleocr
+    restart: unless-stopped
+
+  db:
+    image: mysql:8
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-rootpassword}
+      - MYSQL_DATABASE=${DB_NAME:-jdi_document_converter}
+      - MYSQL_CHARACTER_SET_SERVER=utf8mb4
+      - MYSQL_COLLATION_SERVER=utf8mb4_unicode_ci
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  app_output:
+  app_logs:
+  sidecar_cache:
