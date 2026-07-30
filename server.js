@@ -11,19 +11,20 @@ const { downloadPdf } = require('./src/services/pdfDownloader');
 const { detectPdfType } = require('./src/pdf/detector');
 const { extractText } = require('./src/pdf/textExtractor');
 const { convertPdfToImages } = require('./src/pdf/imageConverter');
-const { performOcr } = require('./src/ocr/engine');
 const { performStructuredOcr } = require('./src/services/structureService');
 const { cleanText } = require('./src/utils/textCleaner');
 const { rebuildDocumentStructure } = require('./src/utils/DocumentStructureRebuilder');
+const { runReconstruction } = require('./src/reconstruction');
+const { performOcrBlocks } = require('./src/ocr/engine');
 const activityLogger = require('./src/services/activityLogger');
 const { generateXlsxReport } = require('./src/services/reportExporter');
 
 const app = express();
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 200 * 1024 * 1024 } });
 
 app.use(express.static('public'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
 
 function extractFileNameFromUrl(url) {
   try {
@@ -75,42 +76,72 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
       result.pageCount = detection.pageCount;
       if (onProgress) onProgress(0.05);
 
-      if (detection.type === 'TEXT') {
-        const extracted = await extractText(pdfBuffer);
-        result.pageCount = extracted.pageCount;
-        result.ocrStatus = 'TIDAK DIPERLUKAN';
-        result.text = extracted.text;
-        if (onProgress) onProgress(0.85);
-      } else {
-        const { images, pageCount } = await convertPdfToImages(pdfBuffer);
-        result.pageCount = pageCount;
-        if (onProgress) onProgress(0.15);
+      if (config.reconstruction && config.reconstruction.enabled) {
+        let ocrBlocks = [];
+        if (detection.type !== 'TEXT') {
+          const { images, pageCount: imgPageCount } = await convertPdfToImages(pdfBuffer, { adaptive: true });
+          result.pageCount = imgPageCount;
+          if (onProgress) onProgress(0.1);
+          ocrBlocks = await performOcrBlocks(images, (page, total) => {
+            if (onProgress) onProgress(0.1 + (page / total) * 0.4);
+          });
+          result.ocrStatus = 'BERHASIL';
+        }
+        if (onProgress) onProgress(0.55);
 
-        const ocrFn = config.structureServiceUrl ? performStructuredOcr : performOcr;
-        const ocrResults = await ocrFn(images, (page, total) => {
-          if (onProgress) onProgress(0.15 + (page / total) * 0.7);
+        const doc = await runReconstruction(pdfBuffer, ocrBlocks, {
+          onProgress: (pct, msg) => {
+            if (onProgress) onProgress(0.55 + pct * 0.4);
+          },
+          ocrEngine: config.ocr ? config.ocr.engine : 'paddle',
         });
-        result.text = ocrResults.join('\n\n');
-        result.ocrStatus = 'BERHASIL';
-      }
+        result.text = doc.markdown;
+        result.reconstruction = {
+          chunks: doc.chunks ? doc.chunks.length : 0,
+          sections: doc.sections ? doc.sections.length : 0,
+          html: doc.html,
+          json: doc.semanticJson,
+          duration: doc.metadata ? doc.metadata.duration : null,
+        };
 
-      const cleanedText = cleanText(result.text);
-
-      if (!cleanedText.trim()) {
-        result.status = 'KOSONG';
-        result.errorMessage = 'Hasil konversi kosong — file mungkin rusak atau tidak terbaca';
-        result.text = '';
+        if (onProgress) onProgress(0.95);
       } else {
-        const structuredText = rebuildDocumentStructure(cleanedText);
-        result.text = structuredText;
+        if (detection.type === 'TEXT') {
+          const extracted = await extractText(pdfBuffer);
+          result.pageCount = extracted.pageCount;
+          result.ocrStatus = 'TIDAK DIPERLUKAN';
+          result.text = extracted.text;
+          if (onProgress) onProgress(0.85);
+        } else {
+          const { images, pageCount } = await convertPdfToImages(pdfBuffer, { adaptive: true });
+          result.pageCount = pageCount;
+          if (onProgress) onProgress(0.15);
 
-        const outputFileName = `${fileName}.txt`;
-        const outputPath = path.join(config.outputDir, outputFileName);
-        await fs.writeFile(outputPath, structuredText, 'utf-8');
-        result.outputFile = outputFileName;
+          const ocrResults = await performStructuredOcr(images, (page, total) => {
+            if (onProgress) onProgress(0.15 + (page / total) * 0.7);
+          });
+          result.text = ocrResults.join('\n\n');
+          result.ocrStatus = 'BERHASIL';
+        }
+
+        const cleanedText = cleanText(result.text);
+
+        if (!cleanedText.trim()) {
+          result.status = 'KOSONG';
+          result.errorMessage = 'Hasil konversi kosong — file mungkin rusak atau tidak terbaca';
+          result.text = '';
+        } else {
+          const structuredText = rebuildDocumentStructure(cleanedText);
+          result.text = structuredText;
+
+          const outputFileName = `${fileName}.txt`;
+          const outputPath = path.join(config.outputDir, outputFileName);
+          await fs.writeFile(outputPath, structuredText, 'utf-8');
+          result.outputFile = outputFileName;
+        }
+
+        if (onProgress) onProgress(0.95);
       }
-
-      if (onProgress) onProgress(0.95);
     }
   } catch (error) {
     result.status = 'RUSAK';
@@ -443,8 +474,9 @@ app.post('/api/activities/save', async (req, res) => {
 
     res.json({ success: true, activityId, message: 'Data berhasil disimpan ke database' });
   } catch (error) {
-    logger.error(`[WEB] Error simpan aktivitas: ${error.message}`);
-    res.status(500).json({ error: error.message });
+    const msg = error?.message || error || 'Unknown error';
+    logger.error(`[WEB] Error simpan aktivitas: ${msg}`);
+    res.status(500).json({ error: msg });
   }
 });
 
@@ -576,6 +608,14 @@ app.get('/api/report/download', async (req, res) => {
     logger.error(`[WEB] Error download laporan: ${error.message}`);
     res.status(500).json({ error: error.message });
   }
+});
+
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request terlalu besar', detail: err.message });
+  }
+  logger.error(`Unhandled error: ${err.message}`);
+  res.status(500).json({ error: 'Internal server error', detail: err.message });
 });
 
 const PORT = process.env.PORT || 3000;

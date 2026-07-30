@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{js,json,css,html}\"",
-    "format:check": "prettier --check \"**/*.{js,json,css,html}\""
+    "format:check": "prettier --check \"**/*.{js,json,css,html}\"",
+    "benchmark": "node --experimental-vm-modules src/benchmark/runner.js"
   },
   "keywords": [
     "jdiih",
@@ -38,6 +39,7 @@
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^4.10.0",
     "ppu-paddle-ocr": "^6.2.0",
+    "tesseract.js": "^5.1.0",
     "uuid": "^10.0.0",
     "winston": "^3.14.0"
   }

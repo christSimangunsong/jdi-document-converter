@@ -1,42 +1,9 @@
 const config = require('../config');
 const logger = require('../services/logger');
-const { withRetry } = require('../utils/retry');
+const { ocrRouter } = require('./router');
 
-let ocrInstance = null;
-
-async function getOcrInstance() {
-  if (ocrInstance) return ocrInstance;
-
-  logger.info('  Menginisialisasi PaddleOCR (ppu-paddle-ocr)...');
-  const { PaddleOcrService } = await import('ppu-paddle-ocr');
-
-  ocrInstance = new PaddleOcrService({
-    recognition: {
-      minimumConfidence: 0.3,
-    },
-  });
-
-  await ocrInstance.initialize();
-  logger.info('  PaddleOCR siap digunakan');
-  return ocrInstance;
-}
-
-async function ocrImage(imageBuffer) {
-  const ocr = await getOcrInstance();
-
-  const result = await withRetry(
-    async () => {
-      const output = await ocr.recognize(imageBuffer);
-      return output;
-    },
-    {
-      maxRetries: config.maxRetries,
-      delayMs: config.retryDelayMs,
-      label: 'OCR halaman',
-    },
-  );
-
-  return result;
+async function performOcr(imageBuffers, onProgress) {
+  return ocrRouter.performOcr(imageBuffers, onProgress);
 }
 
 function formatOcrResult(result) {
@@ -59,26 +26,8 @@ function formatOcrResult(result) {
   return String(result.text || '');
 }
 
-async function performOcr(imageBuffers, onProgress) {
-  const results = [];
-
-  for (let i = 0; i < imageBuffers.length; i++) {
-    logger.info(`  OCR halaman ${i + 1}/${imageBuffers.length}...`);
-    try {
-      const result = await ocrImage(imageBuffers[i]);
-      const pageText = formatOcrResult(result);
-      results.push(pageText);
-    } catch (error) {
-      logger.warn(`  OCR halaman ${i + 1} gagal: ${error.message}. Dilewati.`);
-      results.push('');
-    }
-
-    if (onProgress) {
-      onProgress(i + 1, imageBuffers.length);
-    }
-  }
-
-  return results;
+async function performOcrBlocks(imageBuffers, onProgress) {
+  return ocrRouter.performOcrBlocks(imageBuffers, onProgress);
 }
 
-module.exports = { performOcr, formatOcrResult };
+module.exports = { performOcr, performOcrBlocks, formatOcrResult };

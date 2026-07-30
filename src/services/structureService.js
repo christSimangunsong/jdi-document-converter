@@ -1,11 +1,37 @@
 const config = require('../config');
 const logger = require('./logger');
+const axios = require('axios');
 const { performOcr } = require('../ocr/engine');
 const { formatTableHtmlToText } = require('../utils/tableFormatter');
 
-async function analyzeWithSidecar(images, onProgress) {
-  const base64Images = [];
+const SIDECAR_TIMEOUT = 30000;
+const HEALTH_CHECK_TIMEOUT = 3000;
 
+async function healthCheck(url) {
+  try {
+    await axios.get(`${url}/health`, { timeout: HEALTH_CHECK_TIMEOUT });
+    return true;
+  } catch {
+    try {
+      await axios.get(url, { timeout: HEALTH_CHECK_TIMEOUT });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function analyzeWithSidecar(images, onProgress) {
+  const sidecarUrl = config.structureServiceUrl;
+  if (!sidecarUrl) throw new Error('Structure service URL not configured');
+
+  const alive = await healthCheck(sidecarUrl);
+  if (!alive) {
+    logger.warn(`  PP-StructureV3 di ${sidecarUrl} tidak merespon, lewati`);
+    throw new Error('Sidecar unreachable');
+  }
+
+  const base64Images = [];
   for (let i = 0; i < images.length; i++) {
     const canvas = images[i];
     const isCanvas = typeof canvas.toBuffer === 'function';
@@ -21,31 +47,17 @@ async function analyzeWithSidecar(images, onProgress) {
       base64Images.push('');
     }
 
-    if (onProgress) {
-      onProgress(i + 1, images.length);
-    }
+    if (onProgress) onProgress(i + 1, images.length);
   }
 
-  const url = config.structureServiceUrl || 'http://localhost:5000';
+  logger.info(`  Mengirim ${images.length} halaman ke sidecar di ${sidecarUrl}...`);
 
-  logger.info(`  Mengirim ${images.length} halaman ke sidecar di ${url}...`);
+  const response = await axios.post(`${sidecarUrl}/analyze`, {
+    images: base64Images,
+    lang: config.ocrLang || 'id',
+  }, { timeout: config.sidecarTimeout || 120000 });
 
-  const response = await fetch(`${url}/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      images: base64Images,
-      lang: config.ocrLang || 'id',
-    }),
-    signal: AbortSignal.timeout(config.sidecarTimeout || 120000),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => 'Unknown error');
-    throw new Error(`Sidecar error (${response.status}): ${errText}`);
-  }
-
-  const data = await response.json();
+  const data = response.data;
   const results = [];
 
   for (let i = 0; i < data.pages.length; i++) {
@@ -65,20 +77,65 @@ async function analyzeWithSidecar(images, onProgress) {
   return results;
 }
 
-async function performStructuredOcr(images, onProgress) {
-  if (!config.structureServiceUrl) {
-    logger.info('  Sidecar tidak dikonfigurasi, fallback ke OCR standar...');
-    return performOcr(images, onProgress);
+async function trySuryaSidecar(images, onProgress) {
+  const suryaUrl = process.env.SURYA_SERVICE_URL;
+  if (!suryaUrl) return null;
+
+  const alive = await healthCheck(suryaUrl);
+  if (!alive) {
+    logger.warn(`  Surya sidecar di ${suryaUrl} tidak merespon, lewati`);
+    return null;
   }
 
   try {
-    const results = await analyzeWithSidecar(images, onProgress);
-    logger.info('  Sidecar berhasil, hasil mengandung tabel terstruktur');
-    return results;
-  } catch (error) {
-    logger.warn(`  Sidecar gagal: ${error.message}. Fallback ke OCR standar...`);
-    return performOcr(images, onProgress);
+    const base64Images = [];
+    for (let i = 0; i < images.length; i++) {
+      const canvas = images[i];
+      if (typeof canvas.toBuffer === 'function') {
+        base64Images.push(canvas.toBuffer('image/png').toString('base64'));
+      } else if (Buffer.isBuffer(canvas)) {
+        base64Images.push(canvas.toString('base64'));
+      } else {
+        base64Images.push('');
+      }
+      if (onProgress) onProgress(i + 1, images.length);
+    }
+
+    const resp = await axios.post(`${suryaUrl}/analyze`, {
+      images: base64Images,
+      lang: config.ocrLang || 'id',
+    }, { timeout: SIDECAR_TIMEOUT });
+
+    if (!resp.data || !resp.data.pages) return null;
+
+    return resp.data.pages.map(p => (p.text || ''));
+  } catch (err) {
+    logger.warn(`  Surya sidecar error: ${err.message}`);
+    return null;
   }
+}
+
+async function performStructuredOcr(images, onProgress) {
+  if (config.structureServiceUrl) {
+    try {
+      const results = await analyzeWithSidecar(images, onProgress);
+      logger.info('  PP-StructureV3 berhasil');
+      return results;
+    } catch (error) {
+      logger.warn(`  PP-StructureV3 gagal: ${error.message}`);
+    }
+  }
+
+  if (process.env.SURYA_SERVICE_URL) {
+    const suryaResult = await trySuryaSidecar(images, onProgress);
+    if (suryaResult) {
+      logger.info('  Surya sidecar berhasil');
+      return suryaResult;
+    }
+  }
+
+  logger.info('  Sidecar tidak tersedia, fallback ke OCR standar...');
+  return performOcr(images, onProgress);
 }
 
 module.exports = { performStructuredOcr, analyzeWithSidecar };

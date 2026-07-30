@@ -6,3 +6,6 @@ uploads/
 sidecar/__pycache__/
 sidecar/*.pyc
 sidecar/.paddleocr/
+sidecar/surya/__pycache__/
+benchmark/results/
+benchmark/test-set/

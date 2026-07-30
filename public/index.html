@@ -1116,18 +1116,23 @@
               btn.disabled = false;
             }, 2500);
           } else {
+            const errMsg = data.error || 'Gagal menyimpan';
             btn.textContent = 'Gagal!';
+            console.error('Save error:', errMsg);
+            alert('Gagal menyimpan: ' + errMsg);
             setTimeout(() => {
               btn.innerHTML = 'Simpan ke Database';
               btn.disabled = false;
-            }, 2000);
+            }, 3000);
           }
         } catch (e) {
           btn.textContent = 'Gagal!';
+          console.error('Save network error:', e);
+          alert('Gagal menyimpan (koneksi): ' + e.message);
           setTimeout(() => {
             btn.innerHTML = 'Simpan ke Database';
             btn.disabled = false;
-          }, 2000);
+          }, 3000);
         }
       }
 

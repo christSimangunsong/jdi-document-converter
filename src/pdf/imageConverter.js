@@ -1,60 +1,97 @@
 const path = require('path');
-const fs = require('fs-extra');
 const url = require('url');
 const config = require('../config');
 const logger = require('../services/logger');
 
-async function convertPdfToImages(buffer) {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+let _pdfjs = null;
+let _Canvas = null;
 
-  const { createCanvas } = await import('@napi-rs/canvas');
+async function _getPdfjs() {
+  if (!_pdfjs) {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    const workerPath = path.join(
+      path.dirname(require.resolve('pdfjs-dist/package.json')),
+      'legacy',
+      'build',
+      'pdf.worker.mjs',
+    );
+    pdfjs.GlobalWorkerOptions.workerSrc = url.pathToFileURL(workerPath).href;
+    _pdfjs = pdfjs;
+  }
+  return _pdfjs;
+}
 
-  const workerPath = path.join(
-    path.dirname(require.resolve('pdfjs-dist/package.json')),
-    'legacy',
-    'build',
-    'pdf.worker.mjs',
-  );
-  pdfjs.GlobalWorkerOptions.workerSrc = url.pathToFileURL(workerPath).href;
+async function _getCanvas() {
+  if (!_Canvas) {
+    const mod = await import('@napi-rs/canvas');
+    _Canvas = mod;
+  }
+  return _Canvas;
+}
 
+async function openDocument(buffer) {
+  const pdfjs = await _getPdfjs();
+  const data = new Uint8Array(buffer);
+  return await pdfjs.getDocument({ data }).promise;
+}
+
+async function renderPage(doc, pageNum, scale) {
+  const { createCanvas } = await _getCanvas();
+  const page = await doc.getPage(pageNum);
+  const viewport = page.getViewport({ scale });
+  const canvas = createCanvas(viewport.width, viewport.height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, viewport.width, viewport.height);
+  const renderContext = { canvasContext: ctx, viewport };
+  await page.render(renderContext).promise;
+  page.cleanup();
+  return canvas;
+}
+
+async function convertPdfToImages(buffer, options = {}) {
+  const pdfjs = await _getPdfjs();
+  const { createCanvas } = await _getCanvas();
   const data = new Uint8Array(buffer);
   const doc = await pdfjs.getDocument({ data }).promise;
   const pageCount = doc.numPages;
   const images = [];
+  const scale = options.scale || config.pdfRenderScale;
+  const adaptive = options.adaptive || false;
+  const tablePages = options.tablePages || new Set();
 
-  logger.info(`  Merender ${pageCount} halaman ke gambar...`);
+  logger.info(`  Merender ${pageCount} halaman ke gambar (scale: ${adaptive ? 'adaptif' : scale + 'x'})...`);
 
   for (let i = 1; i <= pageCount; i++) {
     try {
+      const pageScale = adaptive
+        ? (tablePages.has(i) ? scale * 1.5 : scale)
+        : scale;
       const page = await doc.getPage(i);
-      const viewport = page.getViewport({ scale: config.pdfRenderScale });
-
+      const viewport = page.getViewport({ scale: pageScale });
       const canvas = createCanvas(viewport.width, viewport.height);
       const ctx = canvas.getContext('2d');
-
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, viewport.width, viewport.height);
-
-      const renderContext = {
-        canvasContext: ctx,
-        viewport,
-      };
-
+      const renderContext = { canvasContext: ctx, viewport };
       await page.render(renderContext).promise;
       page.cleanup();
-
       images.push(canvas);
-      logger.info(`  Halaman ${i}/${pageCount} selesai di-render`);
+      if (adaptive && tablePages.has(i)) {
+        logger.info(`  Halaman ${i}/${pageCount} di-render di scale ${pageScale.toFixed(1)}x (tabel)`);
+      } else {
+        logger.info(`  Halaman ${i}/${pageCount} selesai di-render`);
+      }
     } catch (error) {
       logger.warn(`  Halaman ${i}/${pageCount} gagal di-render: ${error.message}. Dilewati.`);
-      const blank = createCanvas(1, 1);
+      const { createCanvas: cc } = await _getCanvas();
+      const blank = cc(1, 1);
       images.push(blank);
     }
   }
 
   await doc.cleanup();
-
   return { images, pageCount };
 }
 
-module.exports = { convertPdfToImages };
+module.exports = { convertPdfToImages, renderPage, openDocument, _getCanvas };

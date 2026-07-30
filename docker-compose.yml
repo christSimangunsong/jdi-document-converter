@@ -20,7 +20,17 @@ services:
       - OCR_LANG=${OCR_LANG:-id}
       - PDF_RENDER_SCALE=${PDF_RENDER_SCALE:-2.0}
       - STRUCTURE_SERVICE_URL=http://sidecar:5000
+      - SURYA_SERVICE_URL=http://surya-sidecar:5001
+      - DESKEW_SERVICE_URL=http://deskew-sidecar:5002
       - SIDECAR_TIMEOUT=120000
+      - OCR_ENGINE=paddle
+      - OCR_PREPROCESS=true
+      - OCR_PREPROCESS_STEPS=grayscale,denoise,deskew-adaptive,threshold
+      - OCR_MAX_CONFIDENCE_RETRIES=2
+      - DESKEW_ENGINE=auto
+      - DESKEW_MIN_CONFIDENCE=0.3
+      - DESKEW_PERSPECTIVE=false
+      - DESKEW_MAX_ANGLE=30
     depends_on:
       db:
         condition: service_healthy
@@ -38,6 +48,25 @@ services:
       - USE_GPU=${USE_GPU:-0}
     volumes:
       - sidecar_cache:/root/.paddleocr
+    restart: unless-stopped
+
+  surya-sidecar:
+    build: ./sidecar/surya
+    ports:
+      - "5001:5001"
+    environment:
+      - OCR_LANG=${OCR_LANG:-id}
+    volumes:
+      - surya_cache:/root/.cache
+    restart: unless-stopped
+
+  deskew-sidecar:
+    build: ./sidecar
+    command: python deskew.py
+    ports:
+      - "5002:5002"
+    environment:
+      - DESKEW_PORT=5002
     restart: unless-stopped
 
   db:
@@ -63,3 +92,5 @@ volumes:
   app_output:
   app_logs:
   sidecar_cache:
+  surya_cache:
+  deskew_cache:

@@ -5,7 +5,16 @@ const logger = require('./logger');
 let pool = null;
 
 async function getPool() {
-  if (pool) return pool;
+  if (pool) {
+    try {
+      await pool.execute('SELECT 1');
+      return pool;
+    } catch (_) {
+      logger.warn('Koneksi database terputus, membuat pool baru...');
+      await pool.end().catch(() => {});
+      pool = null;
+    }
+  }
   pool = mysql.createPool({
     host: config.db.host,
     user: config.db.user,
@@ -14,6 +23,9 @@ async function getPool() {
     port: config.db.port,
     waitForConnections: true,
     connectionLimit: 10,
+    queueLimit: 0,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 10000,
     charset: 'utf8mb4',
   });
   return pool;
@@ -73,7 +85,7 @@ async function initDatabase() {
 
     logger.info('Database siap');
   } catch (error) {
-    logger.error(`Gagal inisialisasi database: ${error.message}`);
+    logger.error(`Gagal inisialisasi database: ${error?.message || error || 'Unknown error'}`);
     throw error;
   }
 }
@@ -105,7 +117,7 @@ async function logActivity(data) {
     );
     return result.insertId;
   } catch (error) {
-    logger.error(`Gagal log aktivitas: ${error.message}`);
+    logger.error(`Gagal log aktivitas: ${error?.message || error || 'Unknown error'}`);
     return null;
   }
 }
@@ -116,7 +128,7 @@ async function uploadTextToDb(id, text) {
     await p.execute(`UPDATE conversion_activities SET output_text = ?, text_uploaded = 1 WHERE id = ?`, [text, id]);
     return true;
   } catch (error) {
-    logger.error(`Gagal upload teks ke DB: ${error.message}`);
+    logger.error(`Gagal upload teks ke DB: ${error?.message || error || 'Unknown error'}`);
     return false;
   }
 }
@@ -136,7 +148,7 @@ async function getActivities() {
     );
     return rows;
   } catch (error) {
-    logger.error(`Gagal ambil aktivitas: ${error.message}`);
+    logger.error(`Gagal ambil aktivitas: ${error?.message || error || 'Unknown error'}`);
     return [];
   }
 }
@@ -154,7 +166,7 @@ async function getActivityById(id) {
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
-    logger.error(`Gagal ambil aktivitas ${id}: ${error.message}`);
+    logger.error(`Gagal ambil aktivitas ${id}: ${error?.message || error || 'Unknown error'}`);
     return null;
   }
 }
@@ -186,7 +198,7 @@ async function getStats() {
 
     return { summary: rows[0], daily: dailyRows };
   } catch (error) {
-    logger.error(`Gagal ambil statistik: ${error.message}`);
+    logger.error(`Gagal ambil statistik: ${error?.message || error || 'Unknown error'}`);
     return {
       summary: { total: 0, berhasil: 0, gagal: 0, rusak: 0, kosong: 0, uploaded: 0, rata_durasi: null },
       daily: [],
@@ -204,7 +216,7 @@ async function checkDuplicateByUrl(url) {
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
-    logger.error(`Gagal cek duplikat URL: ${error.message}`);
+    logger.error(`Gagal cek duplikat URL: ${error?.message || error || 'Unknown error'}`);
     return null;
   }
 }
@@ -219,7 +231,7 @@ async function checkDuplicateByHash(hash) {
     );
     return rows.length > 0 ? rows[0] : null;
   } catch (error) {
-    logger.error(`Gagal cek duplikat hash: ${error.message}`);
+    logger.error(`Gagal cek duplikat hash: ${error?.message || error || 'Unknown error'}`);
     return null;
   }
 }
@@ -283,7 +295,7 @@ async function getReportData(startDate, endDate) {
 
     return { summary: summaryRows[0], daily: dailyRows, details };
   } catch (error) {
-    logger.error(`Gagal ambil data laporan: ${error.message}`);
+    logger.error(`Gagal ambil data laporan: ${error?.message || error || 'Unknown error'}`);
     return {
       summary: {
         total: 0,
@@ -307,7 +319,7 @@ async function deleteActivity(id) {
     await p.execute(`DELETE FROM conversion_activities WHERE id = ?`, [id]);
     return true;
   } catch (error) {
-    logger.error(`Gagal hapus aktivitas ${id}: ${error.message}`);
+    logger.error(`Gagal hapus aktivitas ${id}: ${error?.message || error || 'Unknown error'}`);
     return false;
   }
 }

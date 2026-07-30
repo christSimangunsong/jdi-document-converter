@@ -1,79 +1,158 @@
 # AGENTS.md — jdi-document-converter
 
-> Panduan agent untuk coding assistant. Changelog history ada di bagian bawah.
+> Compact instructions for OpenCode sessions. Changelog history is below the `---` divider.
+>
+> For an even shorter version, see `AGENTS_QUICK.md`.
 
-## Arsitektur
+## Architecture
 
-| Entry | File | DB logging | `rebuildDocumentStructure` |
-|-------|------|------------|---------------------------|
-| **CLI** | `app.js` | No | No — stops after `cleanText()` |
-| **Web** | `server.js` | No — save on-demand via `POST /api/activities/save` | Yes |
+| Entry | File | Reconstruction | DB save |
+|-------|------|----------------|---------|
+| CLI | `app.js` | Legacy (stops after `cleanText()`) | No |
+| Web | `server.js` | **Legacy** (`RECONSTRUCTION_ENABLED=false`, default) **or Pipeline** (`RECONSTRUCTION_ENABLED=true`) | `POST /api/activities/save` |
 
-Pipeline: `downloadPdf` → `detectPdfType` → `extractText` (TEXT) / `convertPdfToImages→performStructuredOcr→sidecar` (SCAN) → `cleanText` → (`rebuildDocumentStructure` only Web) → output `.txt` **→ user edits text → klik "Simpan ke Database"**
+**Pipeline** (RECONSTRUCTION_ENABLED=true): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `convertPdfToImages→performOcrBlocks`] → `runReconstruction` → Markdown/HTML/JSON/Chunks
 
-Untuk SCAN: jika `STRUCTURE_SERVICE_URL` diset → **PP-StructureV3 sidecar** (layout-aware OCR + table recognition). Jika tidak diset atau sidecar unreachable → fallback ke `ppu-paddle-ocr` standar.
-
-## Routes (Web)
-
-- `POST /process-url` — body `{url, nama?}`
-- `POST /process-urls` — body `{urls:[]}` (max 20) **SSE streaming FIFO**
-- `POST /process-upload` — multipart field `pdf`
-- `POST /process-uploads` — multipart field `pdf` (max 20) **SSE streaming FIFO**
-- `GET /download/:file` — download `.txt` dari `config.outputDir`
-- `GET /api/activities[/stats|/:id]` — activity log queries
-- `POST /api/activities/save` — simpan text + metadata ke DB (body JSON)
+**Legacy** (default): `downloadPdf` → `detectPdfType` → `extractText` (TEXT) / `convertPdfToImages→performOcr|performStructuredOcr` (SCAN) → `cleanText` → `rebuildDocumentStructure` → output `.txt`
 
 ## Commands
 
-| Perintah | Fungsi |
-|---|---|
+| Command | Function |
+|---------|----------|
 | `npm start` | Web server `localhost:3000` |
-| `npm run cli` | CLI batch dari `data/links.json` |
-| `npm test` | `node --experimental-vm-modules test.js` (file belum ada) |
+| `npm run cli` | CLI batch from `data/links.json` |
+| `npm test` | `node --experimental-vm-modules test.js` (88 unit tests) |
+| `npm run lint` | `eslint .` |
+| `npm run format` | `prettier --write "**/*.{js,json,css,html}"` |
+| `npm run benchmark` | Run OCR engine benchmarks |
+
+## Routes (Web)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/process-url` | Body `{url, nama?}` |
+| POST | `/process-urls` | `{urls:[]}` (max 20) **SSE streaming FIFO** |
+| POST | `/process-upload` | Multipart field `pdf` |
+| POST | `/process-uploads` | Multipart field `pdf` (max 20) **SSE streaming FIFO** |
+| GET | `/download/:file` | Download `.txt` from `config.outputDir` |
+| GET | `/api/activities` | List activities |
+| GET | `/api/activities/stats` | Summary + daily group 7 days |
+| GET | `/api/activities/:id` | Detail by ID |
+| POST | `/api/activities/save` | Save text + metadata to DB (JSON body) |
+| DELETE | `/api/activities/:id` | Delete activity + `.txt` file |
+| GET | `/api/report/download` | `?from=&to=&format=xlsx\|csv` |
+
+Batch routes use SSE streaming (events: `progress`, `result`, `error`, `done`). Single routes return JSON.
 
 ## CJS / ESM Hybrid
 
-Project CJS (`require`), tiga import ESM-only dinamis. Jangan ubah ke `require()` — error.
+CJS project (`require`) with **3 dynamic ESM imports**. Do NOT convert to `require()` — will error.
 
 | File | Dynamic import |
-|---|---|
+|------|---------------|
 | `src/pdf/imageConverter.js:8` | `import('pdfjs-dist/legacy/build/pdf.mjs')` |
 | `src/pdf/imageConverter.js:9` | `import('@napi-rs/canvas')` |
 | `src/ocr/engine.js:11` | `import('ppu-paddle-ocr')` |
 
 ## Gotcha — Buffer/Uint8Array/Canvas
 
-`pdfjs-dist` v4 dan `ppu-paddle-ocr` minta `Uint8Array`/`Canvas`, tolak `Buffer`.
-- `imageConverter.js:18` — `new Uint8Array(buffer)` sebelum `pdfjs.getDocument()`
-- `imageConverter.js:43` — push `Canvas` langsung, hindari `toBuffer()`
-- `engine.js:29` — `recognize()` terima `Canvas` (punya `.toBuffer()`)
-- `imageConverter.js:12-16` — worker path pdfjs-dist harus di-resolve dari `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
+`pdfjs-dist` v4 and `ppu-paddle-ocr` require `Uint8Array`/`Canvas`, reject `Buffer`.
 
-## Status & Duplikasi
+- `imageConverter.js:20` — `new Uint8Array(buffer)` before `pdfjs.getDocument()`
+- `imageConverter.js:46` — push `Canvas` directly, avoid `toBuffer()`
+- `engine.js:29` — `recognize()` accepts `Canvas` (which has `.toBuffer()`)
+- `imageConverter.js:12-16` — pdfjs-dist worker path resolved from `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
 
-`processBuffer()` memberi status: `BERHASIL`, `GAGAL`, `RUSAK`, `KOSONG`.
-- PDF 0 byte → **KOSONG**; pipeline throw → **RUSAK**; `cleanText()` kosong → **KOSONG**; download gagal → **GAGAL**
-- SHA256 hash (`computeHash()`) dicek saat `POST /api/activities/save`: jika hash sudah ada DAN `output_text` sudah terisi → DUPLICATE, ditolak
-- Status & Duplikasi hanya di cek saat user klik "Simpan ke Database", tidak ada auto-insert
-- `getActivities()` / `getStats()` hanya mengembalikan data dengan `output_text IS NOT NULL` — record legacy tanpa teks tidak tampil di UI
+## Status & Duplication
 
-## Konfigurasi
+`processBuffer()` returns status: `BERHASIL`, `GAGAL`, `RUSAK`, `KOSONG`.
 
-- `.env`: `OUTPUT_DIR`, `LOG_DIR`, `MAX_RETRIES`, `RETRY_DELAY_MS`, `DOWNLOAD_TIMEOUT`, `OCR_LANG`, `PDF_RENDER_SCALE`, `PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`
-- `linksPath` hardcoded ke `./data/links.json` (`src/config/index.js:14`) — tidak dari `.env`
-- Nama file URL: `extractFileNameFromUrl()` — last path segment, strip `.pdf`, sanitasi, max 200 chars, fallback `doc_`+timestamp. URL dengan spasi di-encode `%20` dulu lalu `decodeURIComponent()`.
-- Nama file upload: `path.parse(file.originalname).name`
-- Multer simpan upload di `uploads/`, dibersihkan setelah diproses
-- `output/`, `logs/`, `uploads/`, `node_modules/`, `.env` di gitignore
+- 0 byte → **KOSONG**; pipeline throws → **RUSAK**; `cleanText()` empty → **KOSONG**; download fails → **GAGAL**
+- SHA256 hash checked at `POST /api/activities/save`: if hash exists AND `output_text IS NOT NULL` → DUPLICATE, rejected
+- `getActivities()` / `getStats()` only return records with `output_text IS NOT NULL`
 
-## Catatan
+## OCR Engine
 
-- Semua log/komentar dalam Bahasa Indonesia
-- `data/links.json` = array `{id, url, nama}` — wajib untuk CLI
-- Retry exponential backoff: `delayMs * attempt` (`src/utils/retry.js:19`)
-- `pdf-parse` (CJS) untuk deteksi & ekstrak teks PDF
-- `@napi-rs/canvas` (bukan `node-canvas`) untuk render PDF ke Canvas
-- Tidak ada linter, formatter, typecheck, atau CI — verifikasi manual wajib
+Pluggable architecture in `src/ocr/`:
+
+| Engine | Class | Type | Config value |
+|--------|-------|------|-------------|
+| PaddleOCR | `paddleEngine.js` | Local (default) | `paddle` |
+| Tesseract.js | `tesseractEngine.js` | Local | `tesseract` |
+| Surya | `suryaEngine.js` | Sidecar (`surya-sidecar:5001`) | `surya` |
+
+- `OCR_ENGINE=paddle|tesseract|surya|auto` in `.env` (default: `paddle`)
+- `auto` tries surya → tesseract → paddle fallback
+- Interface: `init()`, `recognize(image)`, `recognizePage(image)`, `recognizeBlocks(image)` (returns structured blocks with bbox+confidence), `destroy()`
+- `performOcrBlocks()` used by Reconstruction pipeline
+
+## Sidecars
+
+| Sidecar | Port | Service | Purpose |
+|---------|------|---------|---------|
+| PP-StructureV3 | 5000 | `sidecar/main.py` (FastAPI) | Layout-aware OCR + table recognition |
+| Surya | 5001 | `sidecar/surya/` | Alternative OCR engine |
+
+- PP-StructureV3: `POST /analyze` accepts base64 images, returns per-page text + table HTML
+- If `STRUCTURE_SERVICE_URL` unset or unreachable → fallback to modular OCR engine
+- Surya: used when `OCR_ENGINE=surya`
+- Per-page error: failed pages return empty text, remaining pages continue
+
+## Image Preprocessor
+
+`src/ocr/preprocessor.js` — enabled via `OCR_PREPROCESS=true`:
+- `grayscale`, `denoise` (3×3 median), `threshold` (adaptive), `deskew`
+
+Steps configured via `OCR_PREPROCESS_STEPS=grayscale,denoise,threshold` (comma-separated).
+
+## Benchmark
+
+`npm run benchmark -- --dir ./benchmark/test-set --engines paddle,tesseract,surya`
+
+- Each document needs paired `.pdf` + `.gt.txt` (ground truth)
+- Metrics: CER, WER, confidence, speed (pg/s), layout/table/structure quality
+- Output: `benchmark/results/` (HTML + JSON)
+
+## Configuration
+
+`.env` variables (see `src/config/index.js` for defaults):
+
+| Group | Key variables |
+|-------|--------------|
+| Paths | `OUTPUT_DIR`, `LOG_DIR`, `linksPath` hardcoded to `./data/links.json` |
+| Retry | `MAX_RETRIES` (3), `RETRY_DELAY_MS` (2000), `DOWNLOAD_TIMEOUT` (60000) |
+| OCR | `OCR_ENGINE`, `OCR_LANG` (id), `OCR_PREPROCESS`, `OCR_PREPROCESS_STEPS`, `OCR_MIN_CONFIDENCE` (0.3), `OCR_MAX_CONFIDENCE_RETRIES` (2) |
+| PDF | `PDF_RENDER_SCALE` (2.0) |
+| Deskew | `DESKEW_ENGINE` (auto), `DESKEW_SERVICE_URL`, `DESKEW_MIN_CONFIDENCE` (0.3), `DESKEW_PERSPECTIVE` (false), `DESKEW_MAX_ANGLE` (30) |
+| DB | `DB_HOST/USER/PASSWORD/NAME/PORT` |
+| Sidecar | `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT` (120s), `SURYA_SERVICE_URL` |
+| Pipeline | `RECONSTRUCTION_ENABLED` (false), `RECONSTRUCTION_CHUNK_SIZE` (1000), `RECONSTRUCTION_CHUNK_OVERLAP` (200) |
+
+- File name from URL: `extractFileNameFromUrl()` — last segment, strip `.pdf`, sanitize, max 200 chars. Spaces encoded `%20` then `decodeURIComponent()`
+- File name from upload: `path.parse(file.originalname).name`
+- Multer saves to `uploads/`, cleaned after processing
+
+## Notes
+
+- All logs/comments in **Bahasa Indonesia**
+- `data/links.json` format: `[{id, url, nama}]` — required for CLI
+- Retry: exponential backoff `delayMs * attempt` (`src/utils/retry.js:19`)
+- `pdf-parse` (CJS) for text PDF detection & extraction
+- `@napi-rs/canvas` (not `node-canvas`) for PDF-to-Canvas rendering
+- **Orientation correction** (opt-in): add `rotate` to `OCR_PREPROCESS_STEPS` to enable 90° rotation correction via projection peak analysis. Not enabled by default. See `src/ocr/orientationDetector.js`
+- **Deskew adaptif multi-engine** (`src/ocr/deskewRouter.js`): cascading engine — Tesseract OSD (orientasi 0/90/180/270°) → Hough Transform sidecar (kemiringan ±30°, 0.1° resolusi) → Projection profile (±5°, fallback). Dikontrol via `DESKEW_ENGINE=auto|hough|tesseract|projection`. Sidecar: `sidecar/deskew.py` port 5002 dengan endpoint `/detect-skew`, `/deskew`, `/correct-perspective`, `/deskew-full`.
+- **Confidence-based retry** (`src/ocr/qualityMetrics.js`): tiap halaman di-scoring (confidence, garbageRatio, wordCount). Jika kualitas rendah → retry dengan preprocessing berbeda, engine alternatif, atau DPI lebih tinggi. `OCR_MAX_CONFIDENCE_RETRIES=2`. Fungsi: `computePageScore`, `shouldRetry`, `selectRetryStrategy`.
+- **Adaptive DPI rendering** (`src/ocr/adaptiveRenderer.js`): halaman tabel di-render di scale 1.5×–2.5× dari base `PDF_RENDER_SCALE`. Retry meningkatkan scale otomatis. Cache render per page+scale.
+- **Image converter per-page** (`src/pdf/imageConverter.js`): `renderPage(pdfDoc, pageNum, scale)` untuk render halaman individual. `convertPdfToImages()` support `{adaptive: true, tablePages: Set}`.
+- **Table detection multi-engine** (`src/ocr/tableDetector.js`): PP-StructureV3 (port 5000) → Surya (port 5001) → heuristic (digit line + column alignment analysis). `detectTableStructure(canvas)` return source/confidence/tables.
+- **Cell-level OCR** (`src/ocr/cellOcr.js`): crop cell dari full-page canvas → OCR 2× scale → format ASCII table via `reconstructTableFromBlocks(blocks)` dan `formatAsciiTable(rows)`. `ocrTableCell(canvas, bbox, engine)`.
+- `performStructuredOcr()` (`src/services/structureService.js`): selalu coba PP-StructureV3 → Surya → standard OCR secara berjenjang.
+- Per-page error handling: `imageConverter.js` and `engine.js` **skip** failed pages (blank canvas / empty string), do NOT abort the whole document
+- **ESLint**: `eslint:recommended`, 2-space indent, single quotes, comma-dangle always-multiline
+- **Prettier**: singleQuote, trailingComma all, printWidth 120, tabWidth 2, endOfLine lf
+- **CI**: GitHub Actions on push/PR to `main`, Node 18 & 20 matrix, `npm ci` → `npm run lint` → `npm test` (with `NODE_OPTIONS=--experimental-vm-modules`)
+- **Docker**: `node:20-slim`, tini entrypoint, `npm ci --only=production`, EXPOSE 3000
+- **docker-compose**: 4 services (app + sidecar + surya-sidecar + MySQL 8), healthcheck DB, persistent volumes
 
 ---
 
@@ -728,3 +807,148 @@ if any word ≥ 6 chars → NOT GARBAGE (has meaningful text)
 ### Per-page error handling
 Sebelumnya: satu halaman gagal render/OCR → seluruh dokumen gagal.
 Sesudahnya: halaman gagal di-skip (blank canvas / string kosong), halaman lain diproses normal.
+
+---
+
+## Changelog — 2026-07-30 (v15)
+
+### ringkasan
+Implementasi **Document Reconstruction Pipeline** — pipeline modular 16 file untuk mengonversi PDF dokumen hukum Indonesia menjadi representasi terstruktur (Markdown, HTML, Semantic JSON, Chunks). Pipeline terintegrasi ke `server.js` via switch `RECONSTRUCTION_ENABLED=true/false` (default `false` untuk backward compat).
+
+### file baru
+
+| File | keterangan |
+|---|---|
+| `src/reconstruction/models/documentModel.js` | Class definitions: BBox, Block, Line, Paragraph, Heading, Table, ListItem, Node, DocumentNode, Document, LEGAL_TYPES |
+| `src/reconstruction/pipeline.js` | Pipeline orchestrator — 13 stage runner dengan progress callback |
+| `src/reconstruction/index.js` | Entry point `runReconstruction()` |
+| `src/reconstruction/analyzer/documentAnalyzer.js` | Deteksi tipe PDF (digital/scan), grouping per halaman |
+| `src/reconstruction/analyzer/textExtractor.js` | Ekstrak teks dari PDF digital (wrapper pdf-parse) |
+| `src/reconstruction/builder/readingOrderResolver.js` | Urutkan blok OCR berdasarkan posisi (Y→X) |
+| `src/reconstruction/builder/lineMerger.js` | Gabung blok sebaris (threshold Y) |
+| `src/reconstruction/builder/documentTreeBuilder.js` | Bangun pohon dokumen: deteksi BAB/Bagian/Paragraf/Pasal/Ayat/Huruf |
+| `src/reconstruction/builder/legalParser.js` | Tag komponen hukum: Menimbang/Mengingat/Memutuskan/Menetapkan |
+| `src/reconstruction/output/markdownGenerator.js` | Output Markdown dengan heading/pasal bold/indent |
+| `src/reconstruction/output/htmlGenerator.js` | Output HTML + CSS inline |
+| `src/reconstruction/output/semanticJsonGenerator.js` | Output JSON semantik `{type, number, title, children}` |
+| `src/reconstruction/output/chunkBuilder.js` | Chunking untuk RAG: size + overlap, metadata per chunk |
+| `src/reconstruction/output/embeddingFormatter.js` | Format chunk untuk embedding input + RAG format |
+| `src/reconstruction/debug/visualDebugger.js` | Debug tree HTML interaktif + JSON dump |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/interface.js` | 3 methods (init, recognize, recognizePage) | + `recognizeBlocks(image)` — return blocks dengan bbox+confidence |
+| `src/ocr/router.js` | export `performOcr`, `performOcrWithEngine` | + `performOcrBlocks(imageBuffers, onProgress)` — return structured blocks |
+| `src/ocr/engine.js` | export `performOcr`, `formatOcrResult` | + `performOcrBlocks` re-export |
+| `src/config/index.js` | 5 section (outputDir–db) | + `reconstruction` section (enabled, debug, debugDir, chunkSize, chunkOverlap, outputFormat) |
+| `.env` | 49 baris | + 6 var reconstruction |
+| `server.js` | `processBuffer()` hanya legacy path | + pipeline path saat `RECONSTRUCTION_ENABLED=true`: `performOcrBlocks` → `runReconstruction` → output markdown/html/json/chunks |
+| `test.js` | 59 tests | + 29 tests reconstruction pipeline = **88 total** |
+| `AGENTS_QUICK.md` | 143 baris | + Reconstruction Pipeline section, update arsitektur, update test count |
+
+### perubahan detail
+
+**`server.js`** — perubahan di `processBuffer()`:
+- Import baru: `runReconstruction`, `performOcrBlocks`
+- Branch baru (baris 48-85): jika `config.reconstruction.enabled`:
+  - SCAN: `convertPdfToImages` → `performOcrBlocks` (return blocks dengan bbox, confidence, page)
+  - TEXT: langsung ke pipeline tanpa OCR
+  - `runReconstruction(pdfBuffer, ocrBlocks)` → return Document object
+  - `result.text` = `doc.markdown`, ditambah `result.reconstruction` (chunks count, html, json)
+- Legacy branch tetap utuh untuk `RECONSTRUCTION_ENABLED=false` (default)
+
+### Data model classes (`documentModel.js`)
+- **BBox** — bounding box dengan `centerX()`, `centerY()`, `overlaps(other, threshold)`
+- **Block** — unit terkecil dari OCR (text, confidence, bbox, page, order, source)
+- **Line** — gabungan blocks sebaris
+- **Paragraph** — kumpulan lines, parent container
+- **Heading** — node heading dengan level, number, originalType
+- **Table** — headers + rows, method `toMarkdown()`
+- **ListItem** — list dengan level, number, marker
+- **Node** — generic tree node generic
+- **DocumentNode** — tree node dengan type/originalType/number/title/text, method `toJSON()`, `flatten()`
+- **Document** — result container: title, pages, sections, root, markdown, html, json, chunks
+
+### Pipeline flow
+```
+Pipeline.run(pdfBuffer, ocrBlocks)
+  │
+  ├─ 0%  documentAnalyzer.analyze() — deteksi type, group pages
+  ├─ 5%  [TEXT] textExtractor.extract() — pdf-parse
+  │      [SCAN] ocrBlocks langsung dari performOcrBlocks
+  ├─ 30% readingOrderResolver.resolve() — sort by Y→X
+  ├─ 40% lineMerger.merge() — gabung blocks sebaris jadi Line
+  ├─ 50% documentTreeBuilder.build() — bangun pohon (BAB→Pasal→Ayat)
+  ├─ 65% legalParser.parse() — tag Menimbang/Mengingat/dll
+  ├─ 75% markdownGenerator.generate()
+  ├─ 80% htmlGenerator.generate()
+  ├─ 85% semanticJsonGenerator.generate()
+  ├─ 90% chunkBuilder.build() — chunk size 1000, overlap 200
+  ├─ 95% embeddingFormatter.format()
+  └─ 100% Document object
+```
+
+### 29 test baru di section `=== 10. Reconstruction Pipeline ===`:
+Model: BBox centerX/Y, overlap, DocumentNode constructor/toJSON/flatten, Table toMarkdown, Document constructor/toJSON.
+Resolver: posisi, empty, fallback order.
+Merger: merge adjacent, separate by Y.
+TreeBuilder: BAB detection, pasal, ayat (dengan parent pasal), empty.
+LegalParser: document type, menimbang.
+Generators: markdown bab/pasal, html, semanticJson.
+Chunker: chunk creation, empty input.
+
+---
+
+## Changelog — 2026-07-30 (v16)
+
+### ringkasan
+Implementasi 5 fitur untuk menangani dokumen scan sulit: deskew adaptif multi-engine, confidence-based retry, adaptive DPI rendering, table detection multi-engine, cell-level OCR, dan perspective correction.
+
+### file baru
+
+| File | keterangan |
+|------|------------|
+| `sidecar/deskew.py` | FastAPI sidecar port 5002: Hough Transform skew + perspective correction. 4 endpoint: `/detect-skew`, `/deskew`, `/correct-perspective`, `/deskew-full` |
+| `src/ocr/deskewRouter.js` | Orchestrator deskew: Tesseract OSD (0/90/180/270°) → Hough sidecar (±30°, 0.1°) → Projection profile (±5° fallback) |
+| `src/ocr/qualityMetrics.js` | Page scoring (confidence, garbageRatio, wordCount), `shouldRetry()`, `selectRetryStrategy()` — backbone confidence retry |
+| `src/ocr/adaptiveRenderer.js` | Per-page adaptive DPI: `renderPageAdaptive()` — scale 1.5×–2.5× untuk halaman tabel/retry |
+| `src/ocr/tableDetector.js` | `detectTableStructure()` — PP-StructureV3 → Surya → heuristic (digit line + column alignment) |
+| `src/ocr/cellOcr.js` | `ocrTableCell()` (crop + 2× OCR), `reconstructTableFromBlocks()`, `formatAsciiTable()` (border + wrapping) |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|------|---------|---------|
+| `src/pdf/detector.js` | threshold 50 chars, tanpa heuristic | threshold 200 chars + `estimateImageContent()` (XObject/image count vs text ops) |
+| `src/pdf/imageConverter.js` | `convertPdfToImages()` fixed scale | + `renderPage(doc, pageNum, scale)`, + `openDocument()`, + `{adaptive, tablePages}` options |
+| `src/ocr/preprocessor.js` | hanya projection deskew ±5° | + import `deskewImage`, + `case 'deskew-adaptive'` step (multi-engine cascade) |
+| `src/ocr/router.js` | OCR tanpa retry | + confidence-based retry loop per-page, preprocessing alternatif tiap retry, engine fallback |
+| `src/services/structureService.js` | sidecar hanya jika STRUCTURE_SERVICE_URL | selalu coba PP-StructureV3 → Surya → standard OCR cascading |
+| `src/utils/textCleaner.js` | `isTableGarbage()` tanpa proteksi false positive | + `hasLongWord >= 6` guard, + extended Unicode letter regex |
+| `server.js` | SCAN path: `performOcr` atau `performStructuredOcr` | SCAN path: `performStructuredOcr` default, `convertPdfToImages` pakai `{adaptive: true}` |
+| `src/config/index.js` | 6 section | + `deskew` section (engine, serviceUrl, minConfidence, perspectiveCorrection, maxAngle) |
+| `.env` | 57 baris, 7 section | + 8 var baru (deskew, retry, preprocess config) |
+| `docker-compose.yml` | 5 services | + `deskew-sidecar` (port 5002), app env vars untuk deskew + retry |
+| `AGENTS.md` | 900 baris | + 6 fitur baru di Notes, + Deskew/Adaptive/Sidecar di Konfigurasi, + Changelog v16 |
+
+## Changelog — 2026-07-30 (v17)
+
+### ringkasan
+Perbaikan deteksi orientasi landscape (height < width → rotate -90°), heuristic table detection dari blok OCR, preservasi simbol Unicode, dan reorganisasi preprocessing config.
+
+### perubahan
+
+| File | sebelum | sesudah |
+|------|---------|---------|
+| `.env` | `PREPROCESS_STEPS=grayscale,threshold,rotate,deskew-adaptive` | `grayscale,threshold,rotate` — deskew-adaptive tidak default; +15 var baru: projection, osd, perspective, table |
+| `src/config/index.js` | 6 section (outputDir–deskew) | +4 section: `projection`, `osd`, `perspective`, `table`; deskew maxAngle default → 15 |
+| `src/ocr/orientationDetector.js` | 85 baris: projection peaks + density + threshold kompleks | **Simplifikasi**: 9 baris efektif. Landscape (h<w) → rotate -90° langsung. Portrait skip. **CJK hilang** |
+| `src/ocr/deskewRouter.js` | export `{deskewImage, correctPerspective}` | + export `tryTesseractOsd`; maxAngle dinamis dari config |
+| `src/ocr/preprocessor.js` | import `{deskewImage}` | + import `correctPerspective`; + `case 'perspective'` step |
+| `src/ocr/tableDetector.js` | `detectTableStructure(canvas)` — sidecar + heuristic | + `detectTableFromLines(lines)` — grid detection Y→X dari blok OCR tanpa sidecar |
+| `src/ocr/cellOcr.js` | `clusterBlocksToGrid` ROW_THRESHOLD=15 hardcoded | threshold adaptif `max(8, avgH*0.8)`; + `SYMBOL_MAP`; + `fixTableCellSymbol()` |
+| `src/utils/textCleaner.js` | `cleanText` strip semua non-Latin | + range Unicode: arrows, misc symbols, dingbats (✓, ☐, → preserved) |
+| `src/reconstruction/builder/documentTreeBuilder.js` | `_detectTables` hanya ASCII (`\|`, `+`) | + `detectTableFromLines()` integration; lines tabel dipisah, sisanya proses normal; `Table` node di-inject tree |
+| `src/reconstruction/pipeline.js` | `ocrBlocks.length > 0` check | + debug logging tiap stage |

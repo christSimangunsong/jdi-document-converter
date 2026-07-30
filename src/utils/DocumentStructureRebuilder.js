@@ -51,31 +51,25 @@ class DocumentStructureRebuilder {
     if (/^[a-z][.)]\s/.test(line)) return 'HURUF';
     if (/^\d+[.)]\s/.test(line)) return 'NOMOR';
     if (/^[-•▪➢]\s/.test(line)) return 'BULLET';
+    if (/^(Menimbang|Mengingat|Memutuskan|Menetapkan|MEMUTUSKAN|MENETAPKAN)\s*:/.test(line)) return 'LEGAL_PREAMBLE';
+    if (/^(PEMERINTAH|MENTERI|BUPATI|WALIKOTA|GUBERNUR)\s+/.test(line)) return 'LEGAL_AUTHORITY';
     return 'BODY';
   }
 
   level(type) {
     switch (type) {
-      case 'BAB':
-        return 1;
-      case 'BAGIAN':
-        return 2;
-      case 'PARAGRAF':
-        return 3;
-      case 'PASAL':
-        return 4;
-      case 'AYAT_HEADER':
-        return 5;
-      case 'AYAT':
-        return 5;
-      case 'HURUF':
-        return 6;
-      case 'NOMOR':
-        return 6;
-      case 'BULLET':
-        return 6;
-      default:
-        return 7;
+      case 'LEGAL_AUTHORITY': return 1;
+      case 'LEGAL_PREAMBLE': return 2;
+      case 'BAB': return 3;
+      case 'BAGIAN': return 4;
+      case 'PARAGRAF': return 5;
+      case 'PASAL': return 6;
+      case 'AYAT_HEADER': return 7;
+      case 'AYAT': return 7;
+      case 'HURUF': return 8;
+      case 'NOMOR': return 8;
+      case 'BULLET': return 8;
+      default: return 9;
     }
   }
 
@@ -108,6 +102,7 @@ class DocumentStructureRebuilder {
       blocks
         .map((b) => this.serializeBlock(b, 0))
         .join('\n')
+        .replace(/\n{4,}/g, '\n\n\n')
         .replace(/\n{3,}/g, '\n\n') + '\n'
     );
   }
@@ -121,14 +116,22 @@ class DocumentStructureRebuilder {
       NOMOR: '    ',
       BULLET: '    ',
       BODY: '',
+      LEGAL_PREAMBLE: '',
+      LEGAL_AUTHORITY: '',
     };
     const indent = indentType[block.type] || '';
 
     switch (block.type) {
-      case 'BAB':
+      case 'LEGAL_AUTHORITY':
+      case 'LEGAL_PREAMBLE':
         out = '\n' + block.text + '\n';
         break;
+      case 'BAB':
+        out = '\n' + block.text + '\n' + '='.repeat(block.text.length) + '\n';
+        break;
       case 'BAGIAN':
+        out = '\n' + block.text + '\n';
+        break;
       case 'PARAGRAF':
       case 'PASAL':
         out = '\n' + block.text + '\n';
@@ -149,6 +152,7 @@ class DocumentStructureRebuilder {
       out += block.children
         .map((c) => this.serializeBlock(c, depth + 1))
         .join('\n')
+        .replace(/\n{4,}/g, '\n\n\n')
         .replace(/\n{3,}/g, '\n\n');
     }
 

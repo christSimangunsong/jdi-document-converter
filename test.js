@@ -387,7 +387,251 @@ test('real document ending with lampiran garbage', () => {
 });
 
 // ========================================================================
-console.log('\n=== 10. Exit code ===');
+console.log('\n=== 10. Reconstruction Pipeline ===');
+
+const { BBox, Document, DocumentNode, Table, Heading, Line, Block } = require('./src/reconstruction/models/documentModel');
+const { documentAnalyzer } = require('./src/reconstruction/analyzer/documentAnalyzer');
+const { readingOrderResolver } = require('./src/reconstruction/builder/readingOrderResolver');
+const { lineMerger } = require('./src/reconstruction/builder/lineMerger');
+const { documentTreeBuilder } = require('./src/reconstruction/builder/documentTreeBuilder');
+const { legalParser } = require('./src/reconstruction/builder/legalParser');
+const { markdownGenerator } = require('./src/reconstruction/output/markdownGenerator');
+const { htmlGenerator } = require('./src/reconstruction/output/htmlGenerator');
+const { semanticJsonGenerator } = require('./src/reconstruction/output/semanticJsonGenerator');
+const { chunkBuilder } = require('./src/reconstruction/output/chunkBuilder');
+
+test('BBox centerX/Y compute', () => {
+  const b = new BBox(10, 20, 100, 50);
+  assert.strictEqual(b.centerX(), 60);
+  assert.strictEqual(b.centerY(), 45);
+});
+
+test('BBox overlap detection', () => {
+  const a = new BBox(0, 0, 100, 100);
+  const b = new BBox(25, 25, 100, 100);
+  assert.ok(a.overlaps(b));
+});
+
+test('DocumentNode constructor defaults', () => {
+  const n = new DocumentNode({ type: 'bab', title: 'BAB I' });
+  assert.strictEqual(n.type, 'bab');
+  assert.strictEqual(n.title, 'BAB I');
+  assert.strictEqual(n.level, 0);
+  assert.deepStrictEqual(n.children, []);
+});
+
+test('DocumentNode toJSON minimal', () => {
+  const n = new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal' });
+  const json = n.toJSON();
+  assert.strictEqual(json.type, 'pasal');
+  assert.strictEqual(json.number, '1');
+  assert.strictEqual(json.title, 'Pasal 1');
+  assert.strictEqual(json.text, 'Isi pasal');
+});
+
+test('DocumentNode flatten single', () => {
+  const n = new DocumentNode({ type: 'root' });
+  const flat = n.flatten();
+  assert.strictEqual(flat.length, 1);
+});
+
+test('DocumentNode flatten nested', () => {
+  const child = new DocumentNode({ type: 'pasal', title: 'Pasal 1' });
+  const root = new DocumentNode({ type: 'root', children: [child] });
+  const flat = root.flatten();
+  assert.strictEqual(flat.length, 2);
+});
+
+test('Table toMarkdown with headers', () => {
+  const t = new Table({ headers: ['No', 'Nama', 'Keterangan'], rows: [['1', 'A', 'X'], ['2', 'B', 'Y']] });
+  const md = t.toMarkdown();
+  assert.ok(md.includes('| No | Nama | Keterangan |'));
+  assert.ok(md.includes('| 1 | A | X |'));
+});
+
+test('Table toMarkdown empty returns empty', () => {
+  const t = new Table({ headers: [], rows: [] });
+  assert.strictEqual(t.toMarkdown(), '');
+});
+
+test('readingOrderResolver sorts by position', () => {
+  const blocks = [
+    { text: 'B', confidence: 1, bbox: { x: 50, y: 50, w: 100, h: 20 }, page: 1 },
+    { text: 'A', confidence: 1, bbox: { x: 10, y: 10, w: 100, h: 20 }, page: 1 },
+  ];
+  const sorted = readingOrderResolver.resolve(blocks);
+  assert.strictEqual(sorted[0].text, 'A');
+  assert.strictEqual(sorted[1].text, 'B');
+});
+
+test('readingOrderResolver handles empty input', () => {
+  assert.deepStrictEqual(readingOrderResolver.resolve([]), []);
+});
+
+test('readingOrderResolver preserves order when no bbox', () => {
+  const blocks = [
+    { text: 'B', confidence: 1, page: 1 },
+    { text: 'A', confidence: 1, page: 1 },
+  ];
+  const sorted = readingOrderResolver.resolve(blocks);
+  assert.strictEqual(sorted[0].text, 'B');
+});
+
+test('lineMerger merges adjacent lines', () => {
+  const blocks = [
+    { text: 'Hello', confidence: 1, bbox: { x: 0, y: 0, w: 50, h: 20 }, page: 1 },
+    { text: 'World', confidence: 1, bbox: { x: 60, y: 0, w: 50, h: 20 }, page: 1 },
+  ];
+  const lines = lineMerger.merge(blocks);
+  assert.strictEqual(lines.length, 1);
+  assert.strictEqual(lines[0].text, 'Hello World');
+});
+
+test('lineMerger separate lines by Y', () => {
+  const blocks = [
+    { text: 'First', confidence: 1, bbox: { x: 0, y: 0, w: 50, h: 20 }, page: 1 },
+    { text: 'Second', confidence: 1, bbox: { x: 0, y: 50, w: 50, h: 20 }, page: 1 },
+  ];
+  const lines = lineMerger.merge(blocks);
+  assert.strictEqual(lines.length, 2);
+  assert.strictEqual(lines[0].text, 'First');
+  assert.strictEqual(lines[1].text, 'Second');
+});
+
+test('documentTreeBuilder builds BAB node', async () => {
+  const lines = [new Line({ text: 'BAB I KETENTUAN UMUM', order: 0 }),
+    new Line({ text: 'Pasal 1', order: 1 }),
+    new Line({ text: '(1) Ayat satu', order: 2 })];
+  const tree = await documentTreeBuilder.build(lines);
+  assert.strictEqual(tree.type, 'root');
+  assert.ok(tree.children.length >= 1);
+  const bab = tree.children[0];
+  assert.strictEqual(bab.type, 'bab');
+  assert.strictEqual(bab.number, 'I');
+});
+
+test('documentTreeBuilder detects pasal', async () => {
+  const lines = [new Line({ text: 'Pasal 1', order: 0 }),
+    new Line({ text: 'Isi Pasal 1', order: 1 })];
+  const tree = await documentTreeBuilder.build(lines);
+  const pasal = tree.children[0];
+  assert.strictEqual(pasal.type, 'pasal');
+  assert.strictEqual(pasal.number, '1');
+});
+
+test('documentTreeBuilder detects ayat', async () => {
+  const lines = [new Line({ text: 'Pasal 1', order: 0 }),
+    new Line({ text: '(1) Ayat satu', order: 1 }),
+    new Line({ text: '(2) Ayat dua', order: 2 })];
+  const tree = await documentTreeBuilder.build(lines);
+  const pasal = tree.children[0];
+  assert.strictEqual(pasal.type, 'pasal');
+  assert.strictEqual(pasal.children.length, 2);
+  assert.strictEqual(pasal.children[0].type, 'ayat');
+  assert.strictEqual(pasal.children[0].number, 1);
+});
+
+test('documentTreeBuilder returns empty root for empty input', async () => {
+  const tree = await documentTreeBuilder.build([]);
+  assert.strictEqual(tree.type, 'root');
+  assert.deepStrictEqual(tree.children, []);
+});
+
+test('legalParser detects document types', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'paragraph', text: 'PERATURAN BUPATI DAIRI NOMOR 2 TAHUN 2020' }),
+  ]});
+  legalParser.parse(root);
+  assert.ok(root.metadata.documentTypes.includes('PERATURAN'));
+});
+
+test('legalParser tags menimbang', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'paragraph', text: 'Menimbang: bahwa perlu menetapkan Peraturan Bupati' }),
+  ]});
+  legalParser.parse(root);
+  assert.strictEqual(root.children[0].type, 'menimbang');
+});
+
+test('markdownGenerator generates bab heading', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I KETENTUAN UMUM', level: 1 }),
+  ]});
+  const md = markdownGenerator.generate(root);
+  assert.ok(md.includes('##'));
+  assert.ok(md.includes('I'));
+});
+
+test('markdownGenerator generates pasal bold', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal' }),
+  ]});
+  const md = markdownGenerator.generate(root);
+  assert.ok(md.includes('**Pasal 1**'));
+});
+
+test('markdownGenerator returns empty for null', () => {
+  assert.strictEqual(markdownGenerator.generate(null), '');
+});
+
+test('htmlGenerator wraps in html', () => {
+  const html = htmlGenerator.generate(new DocumentNode({ type: 'root' }), { title: 'Test' });
+  assert.ok(html.includes('<!DOCTYPE html>'));
+  assert.ok(html.includes('<h1>Test</h1>'));
+});
+
+test('htmlGenerator handles pasal', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'pasal', title: 'Pasal 1' }),
+  ]});
+  const html = htmlGenerator.generate(root);
+  assert.ok(html.includes('class="pasal"'));
+  assert.ok(html.includes('<strong>Pasal 1</strong>'));
+});
+
+test('semanticJsonGenerator output structure', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi' }),
+  ]});
+  const json = semanticJsonGenerator.generate(root, { title: 'Test', pageCount: 5 });
+  assert.strictEqual(json.version, '1.0');
+  assert.strictEqual(json.title, 'Test');
+  assert.strictEqual(json.children.length, 1);
+  assert.strictEqual(json.children[0].type, 'pasal');
+});
+
+test('chunkBuilder creates chunks', () => {
+  const root = new DocumentNode({ type: 'root', children: [
+    new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I', level: 1, children: [
+      new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal 1' }),
+    ]}),
+  ]});
+  const chunks = chunkBuilder.build(root, { chunkSize: 100, chunkOverlap: 20 });
+  assert.ok(chunks.length > 0);
+  assert.ok(chunks[0].id);
+  assert.ok(chunks[0].text);
+  assert.ok(chunks[0].metadata);
+  assert.ok(chunks[0].order != null);
+});
+
+test('chunkBuilder returns empty for null root', () => {
+  assert.deepStrictEqual(chunkBuilder.build(null), []);
+});
+
+test('Document constructor sets defaults', () => {
+  const d = new Document({});
+  assert.strictEqual(d.title, '');
+  assert.strictEqual(d.pages, 0);
+  assert.deepStrictEqual(d.chunks, []);
+});
+
+test('Document toJSON includes markdown', () => {
+  const d = new Document({ title: 'Doc', markdown: '# Doc' });
+  assert.strictEqual(d.toJSON().markdown, '# Doc');
+});
+
+// ========================================================================
+console.log('\n=== 11. Exit code ===');
 console.log(`\nHasil: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   console.log('Test gagal:');
