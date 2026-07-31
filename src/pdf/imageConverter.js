@@ -59,14 +59,15 @@ async function convertPdfToImages(buffer, options = {}) {
   const scale = options.scale || config.pdfRenderScale;
   const adaptive = options.adaptive || false;
   const tablePages = options.tablePages || new Set();
+  const tableScale = options.tableScale || scale * 1.5;
 
   logger.info(`  Merender ${pageCount} halaman ke gambar (scale: ${adaptive ? 'adaptif' : scale + 'x'})...`);
 
   for (let i = 1; i <= pageCount; i++) {
     try {
-      const pageScale = adaptive
-        ? (tablePages.has(i) ? scale * 1.5 : scale)
-        : scale;
+      let pageScale = scale;
+      if (adaptive && tablePages.has(i)) pageScale = scale * 1.5;
+      if (!adaptive && tablePages.has(i)) pageScale = tableScale;
       const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale: pageScale });
       const canvas = createCanvas(viewport.width, viewport.height);
@@ -77,7 +78,7 @@ async function convertPdfToImages(buffer, options = {}) {
       await page.render(renderContext).promise;
       page.cleanup();
       images.push(canvas);
-      if (adaptive && tablePages.has(i)) {
+      if (tablePages.has(i) && pageScale !== scale) {
         logger.info(`  Halaman ${i}/${pageCount} di-render di scale ${pageScale.toFixed(1)}x (tabel)`);
       } else {
         logger.info(`  Halaman ${i}/${pageCount} selesai di-render`);

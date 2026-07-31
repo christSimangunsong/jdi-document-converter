@@ -14,6 +14,7 @@ function getPipeline() {
     lang: config.ocrLang || 'id',
     chunkSize: reconstCfg.chunkSize || 1000,
     chunkOverlap: reconstCfg.chunkOverlap || 200,
+    review: config.review || { enabled: true, maxIssues: 50 },
   });
   return _pipeline;
 }

@@ -52,10 +52,14 @@ async function analyzeWithSidecar(images, onProgress) {
 
   logger.info(`  Mengirim ${images.length} halaman ke sidecar di ${sidecarUrl}...`);
 
-  const response = await axios.post(`${sidecarUrl}/analyze`, {
-    images: base64Images,
-    lang: config.ocrLang || 'id',
-  }, { timeout: config.sidecarTimeout || 120000 });
+  const response = await axios.post(
+    `${sidecarUrl}/analyze`,
+    {
+      images: base64Images,
+      lang: config.ocrLang || 'id',
+    },
+    { timeout: config.sidecarTimeout || 120000 },
+  );
 
   const data = response.data;
   const results = [];
@@ -101,14 +105,18 @@ async function trySuryaSidecar(images, onProgress) {
       if (onProgress) onProgress(i + 1, images.length);
     }
 
-    const resp = await axios.post(`${suryaUrl}/analyze`, {
-      images: base64Images,
-      lang: config.ocrLang || 'id',
-    }, { timeout: SIDECAR_TIMEOUT });
+    const resp = await axios.post(
+      `${suryaUrl}/analyze`,
+      {
+        images: base64Images,
+        lang: config.ocrLang || 'id',
+      },
+      { timeout: SIDECAR_TIMEOUT },
+    );
 
     if (!resp.data || !resp.data.pages) return null;
 
-    return resp.data.pages.map(p => (p.text || ''));
+    return resp.data.pages.map((p) => p.text || '');
   } catch (err) {
     logger.warn(`  Surya sidecar error: ${err.message}`);
     return null;

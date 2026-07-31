@@ -33,7 +33,7 @@ const lineMerger = {
 
   _toLine(blocks, index) {
     const mergedText = blocks
-      .map(b => b.text || '')
+      .map((b) => b.text || '')
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -45,7 +45,7 @@ const lineMerger = {
         bbox = {
           x: firstBlock.bbox.x,
           y: firstBlock.bbox.y,
-          w: (lastBlock.bbox.x + lastBlock.bbox.w) - firstBlock.bbox.x,
+          w: lastBlock.bbox.x + lastBlock.bbox.w - firstBlock.bbox.x,
           h: firstBlock.bbox.h,
         };
       }
@@ -53,10 +53,17 @@ const lineMerger = {
       bbox = { ...firstBlock.bbox };
     }
 
-    const blockInstances = blocks.map(b => new Block({
-      text: b.text, confidence: b.confidence, bbox: b.bbox,
-      page: b.page, order: b.order, source: b.source,
-    }));
+    const blockInstances = blocks.map(
+      (b) =>
+        new Block({
+          text: b.text,
+          confidence: b.confidence,
+          bbox: b.bbox,
+          page: b.page,
+          order: b.order,
+          source: b.source,
+        }),
+    );
 
     return new Line({
       blocks: blockInstances,

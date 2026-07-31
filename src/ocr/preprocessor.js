@@ -6,6 +6,7 @@ async function preprocessImage(canvas, options = {}) {
   if (!canvas) return canvas;
 
   const steps = options.steps || ['grayscale', 'threshold'];
+  const upscaleFactor = options.upscaleFactor || 0;
 
   logger.info(`  Preprocessing gambar: ${steps.join(', ')}`);
 
@@ -13,6 +14,9 @@ async function preprocessImage(canvas, options = {}) {
 
   for (const step of steps) {
     switch (step) {
+      case 'upscale':
+        if (upscaleFactor > 1) img = await upscaleCanvas(img, upscaleFactor);
+        break;
       case 'grayscale':
         img = await toGrayscale(img);
         break;
@@ -26,13 +30,25 @@ async function preprocessImage(canvas, options = {}) {
         img = await deskew(img);
         break;
       case 'deskew-adaptive':
-        try { img = await deskewImage(img); } catch (err) { logger.warn(`  Deskew adaptif gagal: ${err.message}, dilewati`); }
+        try {
+          img = await deskewImage(img);
+        } catch (err) {
+          logger.warn(`  Deskew adaptif gagal: ${err.message}, dilewati`);
+        }
         break;
       case 'perspective':
-        try { img = await correctPerspective(img); } catch (err) { logger.warn(`  Perspective correction gagal: ${err.message}, dilewati`); }
+        try {
+          img = await correctPerspective(img);
+        } catch (err) {
+          logger.warn(`  Perspective correction gagal: ${err.message}, dilewati`);
+        }
         break;
       case 'rotate':
-        try { img = await correctOrientation(img); } catch (err) { logger.warn(`  Rotasi gagal: ${err.message}, dilewati`); }
+        try {
+          img = await correctOrientation(img);
+        } catch (err) {
+          logger.warn(`  Rotasi gagal: ${err.message}, dilewati`);
+        }
         break;
       default:
         break;
@@ -40,6 +56,20 @@ async function preprocessImage(canvas, options = {}) {
   }
 
   return img;
+}
+
+async function upscaleCanvas(canvas, factor) {
+  const { createCanvas } = await import('@napi-rs/canvas');
+  const newW = Math.round(canvas.width * factor);
+  const newH = Math.round(canvas.height * factor);
+  const scaled = createCanvas(newW, newH);
+  const ctx = scaled.getContext('2d');
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, newW, newH);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(canvas, 0, 0, newW, newH);
+  logger.info(`  Upscale gambar x${factor.toFixed(1)} (${canvas.width}x${canvas.height} -> ${newW}x${newH})`);
+  return scaled;
 }
 
 async function toGrayscale(canvas) {
@@ -72,8 +102,11 @@ async function otsuThreshold(canvas) {
   let sum = 0;
   for (let i = 0; i < 256; i++) sum += i * hist[i];
 
-  let sumB = 0, wB = 0, wF = 0;
-  let maxVariance = 0, threshold = 128;
+  let sumB = 0,
+    wB = 0,
+    wF = 0;
+  let maxVariance = 0,
+    threshold = 128;
 
   for (let i = 0; i < 256; i++) {
     wB += hist[i];
@@ -84,7 +117,7 @@ async function otsuThreshold(canvas) {
     const meanB = sumB / wB;
     const meanF = (sum - sumB) / wF;
     const variance = wB * wF * (meanB - meanF) * (meanB - meanF);
-    if (variance > maxVariance) {
+    if (variance >= maxVariance) {
       maxVariance = variance;
       threshold = i;
     }
@@ -113,7 +146,9 @@ async function medianDenoise(canvas) {
 
   for (let y = radius; y < height - radius; y++) {
     for (let x = radius; x < width - radius; x++) {
-      const r = [], g = [], b = [];
+      const r = [],
+        g = [],
+        b = [];
       for (let dy = -radius; dy <= radius; dy++) {
         for (let dx = -radius; dx <= radius; dx++) {
           const idx = ((y + dy) * width + (x + dx)) * 4;
@@ -125,7 +160,7 @@ async function medianDenoise(canvas) {
       r.sort((a, b) => a - b);
       g.sort((a, b) => a - b);
       b.sort((a, b) => a - b);
-      const mid = Math.floor(size * size / 2);
+      const mid = Math.floor((size * size) / 2);
       const idx = (y * width + x) * 4;
       out[idx] = r[mid];
       out[idx + 1] = g[mid];
@@ -202,10 +237,15 @@ function detectSkewAngle(gray, w, h) {
 
     let sum = 0;
     let count = 0;
-    for (const p of projections) { sum += p; count++; }
+    for (const p of projections) {
+      sum += p;
+      count++;
+    }
     const mean = sum / count;
     let variance = 0;
-    for (const p of projections) { variance += (p - mean) ** 2; }
+    for (const p of projections) {
+      variance += (p - mean) ** 2;
+    }
     variance /= count;
 
     if (variance > bestVariance) {

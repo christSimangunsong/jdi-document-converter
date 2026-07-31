@@ -5,10 +5,10 @@ function isTableGarbage(line) {
   const words = t.split(/\s+/);
   if (words.length <= 3) return false;
 
-  const hasLongWord = words.some(w => w.length >= 6);
+  const hasLongWord = words.some((w) => w.length >= 6);
   if (hasLongWord) return false;
 
-  const shortCount = words.filter(w => w.length <= 2).length;
+  const shortCount = words.filter((w) => w.length <= 2).length;
   const shortPct = shortCount / words.length;
 
   const digitCount = (t.match(/\d/g) || []).length;
@@ -39,7 +39,7 @@ function filterTableGarbage(text) {
   if (garbageStart === -1) return text;
 
   const keep = lines.slice(0, garbageStart);
-  const cleaned = keep.filter(l => !isTableGarbage(l));
+  const cleaned = keep.filter((l) => !isTableGarbage(l));
 
   return cleaned.join('\n');
 }
@@ -84,9 +84,12 @@ function cleanText(rawText) {
   // eslint-disable-next-line no-control-regex
   text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 
-  // eslint-disable-next-line no-control-regex
-  // eslint-disable-next-line no-control-regex, no-misleading-character-class
-  text = text.replace(/([^\x20-\x7E\x0A\x0D\u00C0-\u024F\u1E00-\u1EFF\u0400-\u04FF\u2190-\u21FF\u2600-\u26FF\u2700-\u27BF])/g, '');
+  /* eslint-disable no-control-regex */
+  text = text.replace(
+    /([^\x20-\x7E\x0A\x0D\u00C0-\u024F\u1E00-\u1EFF\u0400-\u04FF\u2190-\u21FF\u2600-\u26FF\u2700-\u27BF])/g,
+    '',
+  );
+  /* eslint-enable no-control-regex */
 
   text = text.replace(/[ \t]+/g, ' ');
   text = text.replace(/ +\n/g, '\n');
@@ -107,4 +110,11 @@ function cleanText(rawText) {
   return text;
 }
 
-module.exports = { cleanText, isTableGarbage, filterTableGarbage, fixHyphenatedLineBreaks, joinBrokenSentences, fixLegalHeadings };
+module.exports = {
+  cleanText,
+  isTableGarbage,
+  filterTableGarbage,
+  fixHyphenatedLineBreaks,
+  joinBrokenSentences,
+  fixLegalHeadings,
+};

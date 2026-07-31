@@ -11,6 +11,7 @@ const { semanticJsonGenerator } = require('./output/semanticJsonGenerator');
 const { chunkBuilder } = require('./output/chunkBuilder');
 const { embeddingFormatter } = require('./output/embeddingFormatter');
 const { visualDebugger } = require('./debug/visualDebugger');
+const { reviewDocument } = require('./review/documentReviewer');
 const logger = require('../services/logger');
 
 class Pipeline {
@@ -71,7 +72,7 @@ class Pipeline {
     onProgress(0.05, `${analysis.type} PDF: ${analysis.pageCount} halaman`);
 
     if (ocrBlocks.length > 0) {
-      const sampleTexts = ocrBlocks.slice(0, 3).map(b => (b.text || '').substring(0, 60));
+      const sampleTexts = ocrBlocks.slice(0, 3).map((b) => (b.text || '').substring(0, 60));
       logger.info(`  DEBUG: ocrBlocks[0..2] = ${JSON.stringify(sampleTexts)}`);
       onProgress(0.15, `${ocrBlocks.length} blok OCR diterima`);
     } else if (analysis.type === 'digital') {
@@ -79,11 +80,14 @@ class Pipeline {
       ctx.pages = extracted.pages;
       const blocks = [];
       for (const page of extracted.pages) {
-        const lines = page.text.split('\n').filter(l => l.trim());
+        const lines = page.text.split('\n').filter((l) => l.trim());
         for (let i = 0; i < lines.length; i++) {
           blocks.push({
-            text: lines[i], confidence: 1, page: page.pageNum,
-            bbox: { x: 0, y: i * 20, w: 100, h: 16 }, order: blocks.length,
+            text: lines[i],
+            confidence: 1,
+            page: page.pageNum,
+            bbox: { x: 0, y: i * 20, w: 100, h: 16 },
+            order: blocks.length,
           });
         }
       }
@@ -98,7 +102,9 @@ class Pipeline {
     logger.info(`  DEBUG: after readingOrderResolver — ${ctx.ocrBlocks.length} blocks`);
     onProgress(0.4, 'Menggabungkan baris...');
     ctx.lines = lineMerger.merge(ctx.ocrBlocks);
-    logger.info(`  DEBUG: after lineMerger — ${ctx.lines.length} lines, first text: "${(ctx.lines[0] && ctx.lines[0].text || '').substring(0,80)}"`);
+    logger.info(
+      `  DEBUG: after lineMerger — ${ctx.lines.length} lines, first text: "${((ctx.lines[0] && ctx.lines[0].text) || '').substring(0, 80)}"`,
+    );
     onProgress(0.5, 'Membangun pohon dokumen...');
     ctx.tree = await documentTreeBuilder.build(ctx.lines, {
       lang: this.config.lang,
@@ -107,14 +113,18 @@ class Pipeline {
     logger.info(`  DEBUG: after documentTreeBuilder — ${(ctx.tree.children || []).length} children`);
     onProgress(0.65, 'Parsing struktur hukum...');
     ctx.tree = legalParser.parse(ctx.tree);
+    onProgress(0.7, 'Review struktur dokumen...');
+    ctx.review = this.config.review && this.config.review.enabled === false ? null : reviewDocument(ctx);
     onProgress(0.75, 'Menghasilkan Markdown...');
     ctx.markdown = markdownGenerator.generate(ctx.tree, analysis);
-    logger.info(`  DEBUG: markdown length = ${(ctx.markdown || '').length}, first 200 chars: "${(ctx.markdown || '').substring(0,200)}"`);
-    onProgress(0.80, 'Menghasilkan HTML...');
+    logger.info(
+      `  DEBUG: markdown length = ${(ctx.markdown || '').length}, first 200 chars: "${(ctx.markdown || '').substring(0, 200)}"`,
+    );
+    onProgress(0.8, 'Menghasilkan HTML...');
     ctx.html = htmlGenerator.generate(ctx.tree, analysis);
     onProgress(0.85, 'Menghasilkan JSON semantik...');
     ctx.json = semanticJsonGenerator.generate(ctx.tree, analysis);
-    onProgress(0.90, 'Membangun chunk...');
+    onProgress(0.9, 'Membangun chunk...');
     ctx.chunks = chunkBuilder.build(ctx.tree, {
       chunkSize: this.config.chunkSize,
       chunkOverlap: this.config.chunkOverlap,
@@ -146,6 +156,7 @@ class Pipeline {
       html: ctx.html,
       json: ctx.json,
       chunks: ctx.chunks,
+      review: ctx.review,
     });
     doc.root = ctx.tree;
 

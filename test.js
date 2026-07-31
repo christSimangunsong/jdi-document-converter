@@ -389,7 +389,15 @@ test('real document ending with lampiran garbage', () => {
 // ========================================================================
 console.log('\n=== 10. Reconstruction Pipeline ===');
 
-const { BBox, Document, DocumentNode, Table, Heading, Line, Block } = require('./src/reconstruction/models/documentModel');
+const {
+  BBox,
+  Document,
+  DocumentNode,
+  Table,
+  Heading,
+  Line,
+  Block,
+} = require('./src/reconstruction/models/documentModel');
 const { documentAnalyzer } = require('./src/reconstruction/analyzer/documentAnalyzer');
 const { readingOrderResolver } = require('./src/reconstruction/builder/readingOrderResolver');
 const { lineMerger } = require('./src/reconstruction/builder/lineMerger');
@@ -443,7 +451,13 @@ test('DocumentNode flatten nested', () => {
 });
 
 test('Table toMarkdown with headers', () => {
-  const t = new Table({ headers: ['No', 'Nama', 'Keterangan'], rows: [['1', 'A', 'X'], ['2', 'B', 'Y']] });
+  const t = new Table({
+    headers: ['No', 'Nama', 'Keterangan'],
+    rows: [
+      ['1', 'A', 'X'],
+      ['2', 'B', 'Y'],
+    ],
+  });
   const md = t.toMarkdown();
   assert.ok(md.includes('| No | Nama | Keterangan |'));
   assert.ok(md.includes('| 1 | A | X |'));
@@ -499,9 +513,11 @@ test('lineMerger separate lines by Y', () => {
 });
 
 test('documentTreeBuilder builds BAB node', async () => {
-  const lines = [new Line({ text: 'BAB I KETENTUAN UMUM', order: 0 }),
+  const lines = [
+    new Line({ text: 'BAB I KETENTUAN UMUM', order: 0 }),
     new Line({ text: 'Pasal 1', order: 1 }),
-    new Line({ text: '(1) Ayat satu', order: 2 })];
+    new Line({ text: '(1) Ayat satu', order: 2 }),
+  ];
   const tree = await documentTreeBuilder.build(lines);
   assert.strictEqual(tree.type, 'root');
   assert.ok(tree.children.length >= 1);
@@ -511,8 +527,7 @@ test('documentTreeBuilder builds BAB node', async () => {
 });
 
 test('documentTreeBuilder detects pasal', async () => {
-  const lines = [new Line({ text: 'Pasal 1', order: 0 }),
-    new Line({ text: 'Isi Pasal 1', order: 1 })];
+  const lines = [new Line({ text: 'Pasal 1', order: 0 }), new Line({ text: 'Isi Pasal 1', order: 1 })];
   const tree = await documentTreeBuilder.build(lines);
   const pasal = tree.children[0];
   assert.strictEqual(pasal.type, 'pasal');
@@ -520,9 +535,11 @@ test('documentTreeBuilder detects pasal', async () => {
 });
 
 test('documentTreeBuilder detects ayat', async () => {
-  const lines = [new Line({ text: 'Pasal 1', order: 0 }),
+  const lines = [
+    new Line({ text: 'Pasal 1', order: 0 }),
     new Line({ text: '(1) Ayat satu', order: 1 }),
-    new Line({ text: '(2) Ayat dua', order: 2 })];
+    new Line({ text: '(2) Ayat dua', order: 2 }),
+  ];
   const tree = await documentTreeBuilder.build(lines);
   const pasal = tree.children[0];
   assert.strictEqual(pasal.type, 'pasal');
@@ -537,35 +554,152 @@ test('documentTreeBuilder returns empty root for empty input', async () => {
   assert.deepStrictEqual(tree.children, []);
 });
 
+test('documentTreeBuilder nests BAB > BAGIAN > PARAGRAF > PASAL > AYAT', async () => {
+  const lines = [
+    new Line({ text: 'BAB I KETENTUAN UMUM', page: 0 }),
+    new Line({ text: 'Bagian Pertama', page: 0 }),
+    new Line({ text: 'Paragraf 1', page: 0 }),
+    new Line({ text: 'Pasal 1', page: 0 }),
+    new Line({ text: '(1) Dalam peraturan ini yang dimaksud dengan', page: 0 }),
+    new Line({ text: 'Pasal 2', page: 0 }),
+    new Line({ text: '(1) Ayat dua', page: 0 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const bab = tree.children.find((c) => c.type === 'bab');
+  assert.ok(bab, 'BAB harus ada di root');
+  const bagian = bab.children.find((c) => c.type === 'bagian');
+  assert.ok(bagian, 'BAGIAN harus jadi child BAB');
+  const paragraf = bagian.children.find((c) => c.type === 'paragraf');
+  assert.ok(paragraf, 'PARAGRAF harus jadi child BAGIAN');
+  const pasal = paragraf.children.find((c) => c.type === 'pasal');
+  assert.ok(pasal, 'PASAL harus jadi child PARAGRAF');
+  assert.strictEqual(pasal.children[0].type, 'ayat');
+  const pasal2 = paragraf.children.find((c) => c.type === 'pasal' && c.number === '2');
+  assert.ok(pasal2, 'Pasal 2 harus jadi sibling Pasal 1');
+});
+
+test('documentTreeBuilder splits paragraphs across pages', async () => {
+  const lines = [
+    new Line({ text: 'Paragraf halaman satu', page: 0 }),
+    new Line({ text: 'lanjutan paragraf halaman satu', page: 0 }),
+    new Line({ text: 'Paragraf baru halaman dua', page: 1 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const paragraphs = tree.children.filter((c) => c.type === 'paragraph');
+  assert.strictEqual(paragraphs.length, 2, 'paragraf lintas halaman harus dipisah');
+  assert.ok(paragraphs[0].text.includes('halaman satu'));
+  assert.ok(paragraphs[1].text.includes('halaman dua'));
+});
+
+test('documentTreeBuilder interleaves table at original position', async () => {
+  const lines = [
+    new Line({ text: 'Pasal 1', page: 0 }),
+    new Line({ text: '(1) Ayat satu', page: 0 }),
+    new Line({ text: '| Kolom A | Kolom B |', page: 0 }),
+    new Line({ text: '| nilai 1 | nilai 2 |', page: 0 }),
+    new Line({ text: '(2) Ayat dua', page: 0 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const pasal = tree.children.find((c) => c.type === 'pasal');
+  const childTypes = pasal.children.map((c) => c.type);
+  const tableIdx = childTypes.indexOf('table');
+  assert.ok(tableIdx > 0, 'tabel harus ada di antara ayat');
+  assert.ok(childTypes[tableIdx - 1] === 'ayat' || childTypes[tableIdx - 1] === 'paragraph');
+});
+
+test('documentTreeBuilder detects title', async () => {
+  const lines = [
+    new Line({ text: 'PERATURAN DESA NOMOR 5 TAHUN 2020 TENTANG PEMERINTAHAN DESA', page: 0 }),
+    new Line({ text: 'BAB I KETENTUAN UMUM', page: 0 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const title = tree.children[0];
+  assert.strictEqual(title.type, 'title');
+  assert.strictEqual(tree.children[1].type, 'bab');
+});
+
+test('markdownGenerator renders title node bold', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [new DocumentNode({ type: 'title', text: 'PERATURAN DESA NOMOR 5', title: 'PERATURAN DESA NOMOR 5' })],
+  });
+  const md = markdownGenerator.generate(root);
+  assert.ok(md.includes('**PERATURAN DESA NOMOR 5**'));
+});
+
+test('documentTreeBuilder splits ayat and huruf into separate nodes', async () => {
+  const lines = [
+    new Line({ text: 'BAB I KETENTUAN UMUM', page: 0 }),
+    new Line({ text: 'Pasal 1', page: 0 }),
+    new Line({ text: '(1) Dalam peraturan ini yang dimaksud dengan:', page: 0 }),
+    new Line({ text: 'a. Pemerintah Desa adalah penyelenggaraan urusan', page: 0 }),
+    new Line({ text: '(2) Peraturan Desa adalah peraturan yang ditetapkan kepala desa', page: 0 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const pasal = tree.children[0].children[0];
+  assert.strictEqual(pasal.type, 'pasal');
+  assert.deepStrictEqual(
+    pasal.children.map((c) => c.type),
+    ['ayat', 'huruf', 'ayat'],
+  );
+  assert.strictEqual(pasal.children[0].number, 1);
+  assert.strictEqual(pasal.children[0].text, 'Dalam peraturan ini yang dimaksud dengan:');
+  assert.strictEqual(pasal.children[2].number, 2);
+});
+
+test('markdownGenerator BAB heading without duplicate number', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({
+        type: 'bab',
+        number: 'I',
+        title: 'BAB I KETENTUAN UMUM',
+        text: 'BAB I KETENTUAN UMUM',
+        level: 1,
+      }),
+    ],
+  });
+  const md = markdownGenerator.generate(root);
+  assert.ok(md.includes('## BAB I KETENTUAN UMUM'));
+  assert.ok(!md.includes('## I BAB'));
+});
+
 test('legalParser detects document types', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'paragraph', text: 'PERATURAN BUPATI DAIRI NOMOR 2 TAHUN 2020' }),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [new DocumentNode({ type: 'paragraph', text: 'PERATURAN BUPATI DAIRI NOMOR 2 TAHUN 2020' })],
+  });
   legalParser.parse(root);
   assert.ok(root.metadata.documentTypes.includes('PERATURAN'));
 });
 
 test('legalParser tags menimbang', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'paragraph', text: 'Menimbang: bahwa perlu menetapkan Peraturan Bupati' }),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [new DocumentNode({ type: 'paragraph', text: 'Menimbang: bahwa perlu menetapkan Peraturan Bupati' })],
+  });
   legalParser.parse(root);
   assert.strictEqual(root.children[0].type, 'menimbang');
 });
 
 test('markdownGenerator generates bab heading', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I KETENTUAN UMUM', level: 1 }),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I KETENTUAN UMUM', level: 1 })],
+  });
   const md = markdownGenerator.generate(root);
   assert.ok(md.includes('##'));
   assert.ok(md.includes('I'));
 });
 
 test('markdownGenerator generates pasal bold', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal' }),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal' })],
+  });
   const md = markdownGenerator.generate(root);
   assert.ok(md.includes('**Pasal 1**'));
 });
@@ -581,18 +715,17 @@ test('htmlGenerator wraps in html', () => {
 });
 
 test('htmlGenerator handles pasal', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'pasal', title: 'Pasal 1' }),
-  ]});
+  const root = new DocumentNode({ type: 'root', children: [new DocumentNode({ type: 'pasal', title: 'Pasal 1' })] });
   const html = htmlGenerator.generate(root);
   assert.ok(html.includes('class="pasal"'));
   assert.ok(html.includes('<strong>Pasal 1</strong>'));
 });
 
 test('semanticJsonGenerator output structure', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi' }),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi' })],
+  });
   const json = semanticJsonGenerator.generate(root, { title: 'Test', pageCount: 5 });
   assert.strictEqual(json.version, '1.0');
   assert.strictEqual(json.title, 'Test');
@@ -601,11 +734,18 @@ test('semanticJsonGenerator output structure', () => {
 });
 
 test('chunkBuilder creates chunks', () => {
-  const root = new DocumentNode({ type: 'root', children: [
-    new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I', level: 1, children: [
-      new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal 1' }),
-    ]}),
-  ]});
+  const root = new DocumentNode({
+    type: 'root',
+    children: [
+      new DocumentNode({
+        type: 'bab',
+        number: 'I',
+        title: 'BAB I',
+        level: 1,
+        children: [new DocumentNode({ type: 'pasal', number: '1', title: 'Pasal 1', text: 'Isi pasal 1' })],
+      }),
+    ],
+  });
   const chunks = chunkBuilder.build(root, { chunkSize: 100, chunkOverlap: 20 });
   assert.ok(chunks.length > 0);
   assert.ok(chunks[0].id);
@@ -631,7 +771,414 @@ test('Document toJSON includes markdown', () => {
 });
 
 // ========================================================================
-console.log('\n=== 11. Exit code ===');
+console.log('\n=== 11. Review & Kualitas ===');
+
+const { computeQualityScore, shouldAcceptPage, selectRetryStrategy } = require('./src/ocr/qualityMetrics');
+const { documentReviewer } = require('./src/reconstruction/review/documentReviewer');
+
+test('computeQualityScore empty blocks -> score 0', () => {
+  const s = computeQualityScore([]);
+  assert.strictEqual(s.score, 0);
+  assert.strictEqual(s.garbageRatio, 1);
+});
+
+test('computeQualityScore good blocks -> high score', () => {
+  const blocks = [
+    { text: 'Peraturan Desa Nomor 5 Tahun 2020', confidence: 0.95 },
+    { text: 'Bupati adalah kepala pemerintahan daerah', confidence: 0.9 },
+    { text: 'Menimbang bahwa peraturan ini perlu ditetapkan', confidence: 0.88 },
+  ];
+  const s = computeQualityScore(blocks);
+  assert.ok(s.score > 0.7, `score harus tinggi, dapat ${s.score}`);
+});
+
+test('computeQualityScore garbage blocks -> low score', () => {
+  const blocks = [
+    { text: 'M M 1 1 7 0 9', confidence: 0.1 },
+    { text: '1 1 0 1 9', confidence: 0.05 },
+    { text: 'I I I I 8', confidence: 0.08 },
+  ];
+  const s = computeQualityScore(blocks);
+  assert.ok(s.score < 0.3, `score harus rendah, dapat ${s.score}`);
+});
+
+test('shouldAcceptPage rejects empty page', () => {
+  assert.strictEqual(shouldAcceptPage({ confidence: 0, garbageRatio: 1, wordCount: 0, score: 0 }), false);
+});
+
+test('shouldAcceptPage accepts good page', () => {
+  assert.strictEqual(shouldAcceptPage({ confidence: 0.9, garbageRatio: 0.05, wordCount: 40, score: 0.9 }), true);
+});
+
+test('shouldAcceptPage rejects high garbage ratio', () => {
+  assert.strictEqual(shouldAcceptPage({ confidence: 0.8, garbageRatio: 0.7, wordCount: 40, score: 0.5 }), false);
+});
+
+test('shouldAcceptPage rejects too few words', () => {
+  assert.strictEqual(shouldAcceptPage({ confidence: 0.9, garbageRatio: 0.1, wordCount: 2, score: 0.7 }), false);
+});
+
+test('selectRetryStrategy retry 1 uses engine auto', () => {
+  const s = selectRetryStrategy(1);
+  assert.strictEqual(s.engine, 'auto');
+});
+
+test('reviewer no issues on well-formed document', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({
+        type: 'section',
+        text: 'PERATURAN DESA NOMOR 5 TAHUN 2020 TENTANG PEMERINTAHAN DESA',
+        page: 1,
+      }),
+      new DocumentNode({ type: 'section', text: 'Menimbang: bahwa peraturan desa perlu ditetapkan', page: 1 }),
+      new DocumentNode({
+        type: 'bab',
+        number: 'I',
+        title: 'BAB I',
+        text: 'BAB I KETENTUAN UMUM',
+        children: [
+          new DocumentNode({
+            type: 'pasal',
+            number: 1,
+            title: 'Pasal 1',
+            text: 'Pasal 1',
+            children: [
+              new DocumentNode({
+                type: 'ayat',
+                number: 1,
+                title: '(1)',
+                text: 'Dalam peraturan ini yang dimaksud dengan:',
+                page: 1,
+              }),
+              new DocumentNode({ type: 'ayat', number: 2, title: '(2)', text: 'Pemerintah Desa adalah...', page: 1 }),
+            ],
+            page: 1,
+          }),
+          new DocumentNode({ type: 'pasal', number: 2, title: 'Pasal 2', text: 'Pasal 2', page: 1 }),
+        ],
+        page: 1,
+      }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.strictEqual(report.score, 1);
+  assert.strictEqual(report.issueCount, 0);
+});
+
+test('reviewer flags out-of-order BAB', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({ type: 'bab', number: 'II', title: 'BAB II', text: 'BAB II', children: [], page: 1 }),
+      new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I', text: 'BAB I', children: [], page: 1 }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(
+    report.issues.some((i) => i.type === 'bab-order'),
+    'harus ada issue bab-order',
+  );
+  assert.ok(report.score < 1);
+});
+
+test('reviewer flags duplicate pasal', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({
+        type: 'bab',
+        number: 'I',
+        title: 'BAB I',
+        text: 'BAB I',
+        children: [
+          new DocumentNode({ type: 'pasal', number: 1, title: 'Pasal 1', text: 'Pasal 1', page: 1 }),
+          new DocumentNode({ type: 'pasal', number: 1, title: 'Pasal 1', text: 'Pasal 1', page: 1 }),
+        ],
+        page: 1,
+      }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(report.issues.some((i) => i.type === 'pasal-duplicate'));
+});
+
+test('reviewer flags pasal outside BAB', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({
+        type: 'pasal',
+        number: 1,
+        title: 'Pasal 1',
+        text: 'Pasal 1',
+        children: [new DocumentNode({ type: 'ayat', number: 1, title: '(1)', text: 'ayat satu', page: 1 })],
+        page: 1,
+      }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(report.issues.some((i) => i.type === 'heading-parent'));
+});
+
+test('reviewer flags orphan ayat', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [new DocumentNode({ type: 'ayat', number: 1, title: '(1)', text: 'ayat yatim', page: 1 })],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(report.issues.some((i) => i.type === 'orphan-ayat'));
+});
+
+test('reviewer flags ayat out of order', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({
+        type: 'bab',
+        number: 'I',
+        title: 'BAB I',
+        text: 'BAB I',
+        children: [
+          new DocumentNode({
+            type: 'pasal',
+            number: 1,
+            title: 'Pasal 1',
+            text: 'Pasal 1',
+            children: [
+              new DocumentNode({ type: 'ayat', number: 2, title: '(2)', text: 'dua', page: 1 }),
+              new DocumentNode({ type: 'ayat', number: 3, title: '(3)', text: 'tiga', page: 1 }),
+              new DocumentNode({ type: 'ayat', number: 1, title: '(1)', text: 'satu', page: 1 }),
+            ],
+            page: 1,
+          }),
+        ],
+        page: 1,
+      }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(report.issues.some((i) => i.type === 'ayat-order'));
+});
+
+test('reviewer flags page order non-monotonic', () => {
+  const lines = [
+    { text: 'baris 1', page: 1 },
+    { text: 'baris 2', page: 1 },
+    { text: 'baris 3', page: 0 },
+  ];
+  const report = documentReviewer.review({ tree: null, lines });
+  assert.ok(report.issues.some((i) => i.type === 'page-order'));
+});
+
+test('reviewer flags low quality blocks', () => {
+  const blocks = [
+    { text: 'teks bagus', page: 0 },
+    { text: 'sampah 1 1 1', page: 1, quality: 'low' },
+  ];
+  blocks.pageQuality = [{ page: 2, lowQuality: true, accepted: false }];
+  const report = documentReviewer.review({ tree: null, lines: [], ocrBlocks: blocks });
+  assert.ok(report.issues.some((i) => i.type === 'low-quality'));
+});
+
+test('reviewer flags empty table', () => {
+  const root = new DocumentNode({
+    type: 'root',
+    title: 'root',
+    children: [
+      new DocumentNode({ type: 'bab', number: 'I', title: 'BAB I', text: 'BAB I', children: [], page: 1 }),
+      new DocumentNode({ type: 'table', headers: [], rows: [], page: 1 }),
+    ],
+  });
+  const report = documentReviewer.review({ tree: root, lines: [] });
+  assert.ok(report.issues.some((i) => i.type === 'table-empty'));
+});
+
+test('Document toJSON includes review', () => {
+  const d = new Document({ title: 'Doc', markdown: '# Doc', review: { score: 0.9, issueCount: 1, issues: [] } });
+  assert.ok(d.toJSON().review);
+  assert.strictEqual(d.toJSON().review.score, 0.9);
+});
+
+// ========================================================================
+console.log('\n=== 12. Deskew Hough-lite & Region OCR ===');
+
+const { detectSkewHoughLite } = require('./src/ocr/deskewRouter');
+const { detectTableRegions } = require('./src/ocr/tableRegionOcr');
+const { isGarbageWord } = require('./src/ocr/qualityMetrics');
+
+function makeTiltedLineGray(w, h, angleDeg) {
+  const gray = new Uint8Array(w * h).fill(255);
+  const rad = (angleDeg * Math.PI) / 180;
+  const tan = Math.tan(rad);
+  const cx = w / 2;
+  const cy = h / 2;
+  for (let x = 0; x < w; x++) {
+    const y = Math.round(cy + (x - cx) * tan);
+    for (let dy = -2; dy <= 2; dy++) {
+      const yy = y + dy;
+      if (yy >= 0 && yy < h) gray[yy * w + x] = 0;
+    }
+  }
+  return gray;
+}
+
+test('isGarbageWord flags CJK-only word', () => {
+  assert.strictEqual(isGarbageWord('楼'), true);
+});
+
+test('isGarbageWord flags CJK-latin mix', () => {
+  assert.strictEqual(isGarbageWord('Q楼'), true);
+});
+
+test('isGarbageWord flags short digit word', () => {
+  assert.strictEqual(isGarbageWord('123'), true);
+});
+
+test('isGarbageWord keeps valid Indonesian words', () => {
+  assert.strictEqual(isGarbageWord('desa'), false);
+  assert.strictEqual(isGarbageWord('Bupati'), false);
+  assert.strictEqual(isGarbageWord('penghasilan'), false);
+});
+
+test('isGarbageWord keeps year/number with letters', () => {
+  assert.strictEqual(isGarbageWord('2020'), false);
+  assert.strictEqual(isGarbageWord('Rp5.000'), false);
+  assert.strictEqual(isGarbageWord('UndangUndang'), false);
+});
+
+test('computeQualityScore CJK garbage lowers score', () => {
+  const s = computeQualityScore([
+    { text: 'teks bagus sekali', confidence: 0.9 },
+    { text: 'Q楼 绿 廾 鬼', confidence: 0.5 },
+  ]);
+  assert.ok(s.garbageRatio > 0.4, `garbageRatio harus tinggi, dapat ${s.garbageRatio}`);
+});
+
+test('detectSkewHoughLite detects +3 degrees', () => {
+  const gray = makeTiltedLineGray(400, 300, 3);
+  const res = detectSkewHoughLite(gray, 400, 300, 15);
+  assert.ok(res, 'angle harus terdeteksi');
+  assert.ok(Math.abs(res.angle - 3) < 1.5, `angle harus ~3°, dapat ${res.angle}°`);
+});
+
+test('detectSkewHoughLite detects -8 degrees', () => {
+  const gray = makeTiltedLineGray(400, 300, -8);
+  const res = detectSkewHoughLite(gray, 400, 300, 15);
+  assert.ok(res, 'angle harus terdeteksi');
+  assert.ok(Math.abs(res.angle - -8) < 1.5, `angle harus ~-8°, dapat ${res.angle}°`);
+});
+
+test('detectSkewHoughLite returns null on blank image', () => {
+  const gray = new Uint8Array(400 * 300).fill(255);
+  assert.strictEqual(detectSkewHoughLite(gray, 400, 300, 15), null);
+});
+
+test('detectSkewHoughLite returns null on horizontal line', () => {
+  const gray = new Uint8Array(400 * 300).fill(255);
+  for (let x = 0; x < 400; x++) gray[150 * 400 + x] = 0;
+  assert.strictEqual(detectSkewHoughLite(gray, 400, 300, 15), null);
+});
+
+function mockCanvas(grayArray, w, h) {
+  const data = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < w * h; i++) {
+    data[i * 4] = grayArray[i];
+    data[i * 4 + 1] = grayArray[i];
+    data[i * 4 + 2] = grayArray[i];
+    data[i * 4 + 3] = 255;
+  }
+  return {
+    width: w,
+    height: h,
+    getContext: () => ({ getImageData: () => ({ data }) }),
+  };
+}
+
+function makeGridGray(w, h) {
+  const gray = new Uint8Array(w * h).fill(255);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (x === 50 || x === 150 || x === 250 || y === 50 || y === 100 || y === 150) gray[y * w + x] = 0;
+    }
+  }
+  return gray;
+}
+
+test('detectTableRegions finds grid table', () => {
+  const canvas = mockCanvas(makeGridGray(300, 200), 300, 200);
+  const regions = detectTableRegions(canvas);
+  assert.ok(regions.length >= 1, 'region tabel harus terdeteksi');
+  const r = regions[0];
+  assert.ok(r.y <= 50 && r.y + r.h >= 150, `region harus menutupi y 50-150, dapat y=${r.y} h=${r.h}`);
+  assert.ok(r.w >= 150, `region harus selebar 150px, dapat ${r.w}`);
+});
+
+test('detectTableRegions empty on blank page', () => {
+  const canvas = mockCanvas(new Uint8Array(300 * 200).fill(255), 300, 200);
+  assert.deepStrictEqual(detectTableRegions(canvas), []);
+});
+
+test('detectTableRegions empty on single horizontal line', () => {
+  const gray = new Uint8Array(300 * 200).fill(255);
+  for (let x = 0; x < 300; x++) gray[100 * 300 + x] = 0;
+  const canvas = mockCanvas(gray, 300, 200);
+  assert.deepStrictEqual(detectTableRegions(canvas), []);
+});
+
+function makeTiltedGridGray(w, h, angleDeg) {
+  const gray = new Uint8Array(w * h).fill(255);
+  const tan = Math.tan((angleDeg * Math.PI) / 180);
+  const cx = w / 2;
+  const cy = h / 2;
+  const mark = (x, y) => {
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = y + dy;
+      if (yy < 0 || yy >= h) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx;
+        if (xx >= 0 && xx < w) gray[yy * w + xx] = 0;
+      }
+    }
+  };
+  for (const yLine of [50, 100, 150]) {
+    for (let x = 0; x < w; x++) mark(x, Math.round(yLine + (x - cx) * tan));
+  }
+  for (const xLine of [50, 150, 250]) {
+    for (let y = 0; y < h; y++) mark(Math.round(xLine - (y - cy) * tan), y);
+  }
+  return gray;
+}
+
+test('detectTableRegions empty on tilted grid (bug: tabel miring tidak terdeteksi)', () => {
+  const gray = makeTiltedGridGray(300, 200, 4);
+  const canvas = mockCanvas(gray, 300, 200);
+  assert.deepStrictEqual(detectTableRegions(canvas), [], 'grid miring 4° harus 0 region sebelum rectify');
+});
+
+test('detectTableRegions contrast: grid rectified (0°) terdeteksi, grid miring tidak', () => {
+  const tilted = mockCanvas(makeTiltedGridGray(300, 200, 4), 300, 200);
+  const straight = mockCanvas(makeTiltedGridGray(300, 200, 0), 300, 200);
+  assert.deepStrictEqual(detectTableRegions(tilted), [], 'grid miring harus tidak terdeteksi');
+  assert.ok(detectTableRegions(straight).length >= 1, 'grid lurus (hasil rectify) harus terdeteksi');
+});
+
+test('detectSkewHoughLite detects tilted grid angle', () => {
+  const gray = makeTiltedGridGray(400, 300, 4);
+  const res = detectSkewHoughLite(gray, 400, 300, 15);
+  assert.ok(res, 'angle grid miring harus terdeteksi');
+  assert.ok(Math.abs(res.angle - 4) < 1.5, `angle harus ~4°, dapat ${res.angle}°`);
+});
+
+// ========================================================================
+console.log('\n=== 13. Exit code ===');
 console.log(`\nHasil: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   console.log('Test gagal:');

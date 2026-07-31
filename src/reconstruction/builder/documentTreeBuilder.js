@@ -1,15 +1,16 @@
 const logger = require('../../services/logger');
-const { DocumentNode, Table, Heading, Paragraph, ListItem } = require('../models/documentModel');
+const { DocumentNode, Table } = require('../models/documentModel');
 const { detectTableFromLines } = require('../../ocr/tableDetector');
 
 const HEADING_PATTERNS = {
-  'BAB': /^BAB\s+([IVXLCDM]+|[0-9]+)/i,
-  'BAGIAN': /^BAGIAN\s+(PERTAMA|KEDUA|KETIGA|KEEMPAT|KELIMA|KEENAM|KETUJUH|KEDELAPAN|KESEMBILAN|KESEPULUH|[I VXLCDM]+|[0-9]+)/i,
-  'PARAGRAF': /^(\u00a7\s*|Paragraf\s+)([0-9]+|[IVXLCDM]+)/i,
-  'PASAL': /^Pasal\s+([0-9]+|[IVXLCDM]+)/i,
-  'LAMPIRAN': /^Lampiran\s+([IVXLCDM]+|[0-9]+)/i,
-  'BAB_BAGIAN': /^(BAB|BAGIAN|PARAGRAF)\s+/i,
-  'PASAL_REGEX': /^Pasal\s+\d+/i,
+  BAB: /^BAB\s+([IVXLCDM]+|[0-9]+)/i,
+  BAGIAN:
+    /^BAGIAN\s+(PERTAMA|KEDUA|KETIGA|KEEMPAT|KELIMA|KEENAM|KETUJUH|KEDELAPAN|KESEMBILAN|KESEPULUH|[I VXLCDM]+|[0-9]+)/i,
+  PARAGRAF: /^(\u00a7\s*|Paragraf\s+)([0-9]+|[IVXLCDM]+)/i,
+  PASAL: /^Pasal\s+([0-9]+|[IVXLCDM]+)/i,
+  LAMPIRAN: /^Lampiran\s+([IVXLCDM]+|[0-9]+)/i,
+  BAB_BAGIAN: /^(BAB|BAGIAN|PARAGRAF)\s+/i,
+  PASAL_REGEX: /^Pasal\s+\d+/i,
 };
 
 const TABLE_ROW_PATTERN = /^[|+].*[|+]$/;
@@ -30,84 +31,115 @@ const documentTreeBuilder = {
         tableLineIdx.add(tr.startIdx + j);
       }
     }
-    const textLines = lines.filter((_, i) => !tableLineIdx.has(i));
 
-    const paragraphs = this._groupIntoParagraphs(textLines);
+    const paragraphs = this._groupIntoParagraphs(lines, tableLineIdx);
     const groups = this._detectTables(paragraphs);
     for (const tr of tableResults) {
       const tableNode = new Table({ headers: tr.table.headers, rows: tr.table.rows });
-      groups.push({ type: 'table', content: tableNode });
+      groups.push({ type: 'table', content: tableNode, pos: tr.startIdx });
     }
+    groups.sort((a, b) => this._groupPos(a) - this._groupPos(b));
 
     const root = this._buildStructure(groups, { lang, debug });
     if (debug) logger.info(`  Pohon dokumen: ${this._countNodes(root)} node`);
     return root;
   },
 
+  _groupPos(group) {
+    return group.pos != null ? group.pos : Number.MAX_SAFE_INTEGER;
+  },
+
   _emptyRoot() {
     return new DocumentNode({ type: 'root', title: 'root', children: [] });
   },
 
-  _groupIntoParagraphs(lines) {
+  _groupIntoParagraphs(lines, skipIdx) {
     const paragraphs = [];
     let current = [];
-    for (const line of lines) {
-      const text = (line.text || '').trim();
-      if (!text) {
-        if (current.length > 0) {
-          paragraphs.push(current);
-          current = [];
-        }
-        continue;
-      }
-      if (this._isHeading(text)) {
-        if (current.length > 0) paragraphs.push(current);
-        current = [line];
+    let startIdx = -1;
+    let prevPage = null;
+    const flush = () => {
+      if (current.length > 0) {
+        current._startIdx = startIdx;
         paragraphs.push(current);
         current = [];
+      }
+    };
+    for (let i = 0; i < lines.length; i++) {
+      if (skipIdx && skipIdx.has(i)) {
+        flush();
+        prevPage = null;
         continue;
       }
+      const line = lines[i];
+      const text = (line.text || '').trim();
+      if (!text) {
+        flush();
+        prevPage = null;
+        continue;
+      }
+      const page = line.page || 0;
+      if (prevPage != null && page !== prevPage) flush();
+      if (this._isHeading(text)) {
+        flush();
+        current = [line];
+        startIdx = i;
+        prevPage = page;
+        flush();
+        continue;
+      }
+      if (/^\(\d+\)\s+|^[a-z][.)]\s+/i.test(text)) {
+        flush();
+        current = [line];
+        startIdx = i;
+        prevPage = page;
+        flush();
+        continue;
+      }
+      if (current.length === 0) startIdx = i;
       current.push(line);
+      prevPage = page;
     }
-    if (current.length > 0) paragraphs.push(current);
+    flush();
     return paragraphs;
   },
 
   _isHeading(text) {
-    return Object.values(HEADING_PATTERNS).some(p => p.test(text));
+    return Object.values(HEADING_PATTERNS).some((p) => p.test(text));
   },
 
   _detectTables(paragraphs) {
     const groups = [];
     let inTable = false;
     let tableBuffer = [];
+    let tableStartIdx = -1;
     for (const para of paragraphs) {
       const firstText = para[0] ? (para[0].text || '').trim() : '';
       const isTableLine = TABLE_ROW_PATTERN.test(firstText) || TABLE_SEP_PATTERN.test(firstText);
-      const looksLikeTable = firstText.length > 20 &&
-        (firstText.includes('|') || firstText.includes('+') || firstText.includes('\t'));
+      const looksLikeTable =
+        firstText.length > 20 && (firstText.includes('|') || firstText.includes('+') || firstText.includes('\t'));
 
       if (isTableLine || looksLikeTable) {
+        if (tableBuffer.length === 0) tableStartIdx = para._startIdx;
         tableBuffer.push(para);
         inTable = true;
       } else {
         if (inTable && tableBuffer.length > 0) {
-          groups.push({ type: 'table', content: tableBuffer.splice(0) });
+          groups.push({ type: 'table', content: tableBuffer.splice(0), pos: tableStartIdx });
           inTable = false;
         }
-        groups.push({ type: 'paragraph', content: para });
+        groups.push({ type: 'paragraph', content: para, pos: para._startIdx });
       }
     }
     if (inTable && tableBuffer.length > 0) {
-      groups.push({ type: 'table', content: tableBuffer });
+      groups.push({ type: 'table', content: tableBuffer, pos: tableStartIdx });
     }
     return groups;
   },
 
-  _buildStructure(groups, options) {
+  _buildStructure(groups) {
     const root = new DocumentNode({ type: 'root', title: 'root', level: 0 });
     const stack = [root];
-    let sectionCounters = { bab: 0, pasal: 0 };
 
     for (const group of groups) {
       if (group.type === 'table') {
@@ -116,12 +148,12 @@ const documentTreeBuilder = {
         continue;
       }
 
-      const node = this._classifyParagraph(group.content, options, stack);
+      const node = this._classifyParagraph(group.content);
       if (!node) continue;
 
-      if (node.type === 'heading' && node.originalType) {
+      if (node.type === 'bab' || node.type === 'bagian' || node.type === 'paragraf' || node.type === 'lampiran') {
         const level = node.level || 1;
-        while (stack.length > level) stack.pop();
+        while (stack.length - 1 >= level) stack.pop();
         const parent = stack[stack.length - 1];
         parent.children.push(node);
         node.children = node.children || [];
@@ -130,7 +162,10 @@ const documentTreeBuilder = {
         const parent = stack[stack.length - 1];
         parent.children.push(node);
         node.children = node.children || [];
-        if (node.type === 'pasal') stack.push(node);
+        if (node.type === 'pasal') {
+          while (stack[stack.length - 1].type === 'pasal') stack.pop();
+          stack.push(node);
+        }
       }
     }
 
@@ -138,7 +173,7 @@ const documentTreeBuilder = {
     return root;
   },
 
-  _classifyParagraph(lines, options, stack) {
+  _classifyParagraph(lines) {
     const firstLine = lines[0];
     if (!firstLine) return null;
     const text = (firstLine.text || '').trim();
@@ -150,10 +185,12 @@ const documentTreeBuilder = {
     if (HEADING_PATTERNS.LAMPIRAN.test(text)) {
       return this._createNode('lampiran', text, lines, { level: 1, originalType: 'LAMPIRAN' });
     }
+    const titleMatch = text.match(/^(PERATURAN|KEPUTUSAN|UNDANG-UNDANG|INSTRUKSI|NOTA KESEPAHAMAN|MEMORANDUM)\b/i);
+    if (titleMatch && (text.length >= 25 || /\b(NOMOR|TAHUN|TENTANG)\b/i.test(text))) {
+      return this._createNode('title', text, lines, { level: 0, originalType: 'JUDUL' });
+    }
     if (HEADING_PATTERNS.BAGIAN.test(text)) {
-      return this._createNode('bagian', text, lines, {
-        level: stack.length >= 2 ? 3 : 2, originalType: 'BAGIAN',
-      });
+      return this._createNode('bagian', text, lines, { level: 2, originalType: 'BAGIAN' });
     }
     if (HEADING_PATTERNS.PARAGRAF.test(text)) {
       return this._createNode('paragraf', text, lines, { level: 3, originalType: 'PARAGRAF' });
@@ -164,19 +201,31 @@ const documentTreeBuilder = {
     const ayatMatch = text.match(/^\((\d+)\)\s*(.+)/);
     if (ayatMatch) {
       return this._createNode('ayat', ayatMatch[2].trim(), lines, {
-        level: 5, originalType: 'AYAT', number: parseInt(ayatMatch[1]), bbox: firstLine.bbox, page,
+        level: 5,
+        originalType: 'AYAT',
+        number: parseInt(ayatMatch[1]),
+        bbox: firstLine.bbox,
+        page,
       });
     }
-    const hurufMatch = text.match(/^([a-z])[\.\)]\s*(.+)/i);
+    const hurufMatch = text.match(/^([a-z])[.)]\s*(.+)/i);
     if (hurufMatch && text.length < 100) {
       return this._createNode('huruf', hurufMatch[2].trim(), lines, {
-        level: 6, originalType: 'HURUF', number: hurufMatch[1], bbox: firstLine.bbox, page,
+        level: 6,
+        originalType: 'HURUF',
+        number: hurufMatch[1],
+        bbox: firstLine.bbox,
+        page,
       });
     }
-    const angkaMatch = text.match(/^(\d+)[\.\)]\s*(.+)/);
+    const angkaMatch = text.match(/^(\d+)[.)]\s*(.+)/);
     if (angkaMatch && text.length < 100) {
       return this._createNode('angka', angkaMatch[2].trim(), lines, {
-        level: 6, originalType: 'ANGKA', number: parseInt(angkaMatch[1]), bbox: firstLine.bbox, page,
+        level: 6,
+        originalType: 'ANGKA',
+        number: parseInt(angkaMatch[1]),
+        bbox: firstLine.bbox,
+        page,
       });
     }
     return this._createNode('paragraph', text, lines, { level: 6, bbox: firstLine.bbox, page });
@@ -184,8 +233,13 @@ const documentTreeBuilder = {
 
   _createNode(type, text, lines, extra = {}) {
     const fullText = lines
-      .map(l => (l.text || '').trim())
-      .filter(t => t)
+      .map((l, i) => {
+        let t = (l.text || '').trim();
+        if (i === 0 && type === 'ayat') t = t.replace(/^\(\d+\)\s*/, '');
+        if (i === 0 && (type === 'huruf' || type === 'angka')) t = t.replace(/^[a-z0-9][.)]\s*/i, '');
+        return t;
+      })
+      .filter((t) => t)
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -220,7 +274,7 @@ const documentTreeBuilder = {
   _parseTable(groups) {
     const tableLines = [];
     for (const group of groups) {
-      for (const line of (group.content || group)) {
+      for (const line of group.content || group) {
         tableLines.push((line.text || '').trim());
       }
     }
@@ -235,7 +289,7 @@ const documentTreeBuilder = {
     }
     if (rows.length === 0) return null;
     const headers = rows[0];
-    const dataRows = rows.slice(1).filter(r => r.length >= 1);
+    const dataRows = rows.slice(1).filter((r) => r.length >= 1);
     return new Table({ headers, rows: dataRows });
   },
 

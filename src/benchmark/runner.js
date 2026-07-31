@@ -97,7 +97,9 @@ async function runBenchmark(options = {}) {
           metrics,
         });
 
-        logger.info(`    CER: ${(metrics.cer * 100).toFixed(1)}% | WER: ${(metrics.wer * 100).toFixed(1)}% | ${metrics.durationMs}ms`);
+        logger.info(
+          `    CER: ${(metrics.cer * 100).toFixed(1)}% | WER: ${(metrics.wer * 100).toFixed(1)}% | ${metrics.durationMs}ms`,
+        );
       } catch (err) {
         logger.error(`  [${meta.name}] Gagal: ${err.message}`);
         docResults.engines.push({

@@ -8,8 +8,12 @@ class BBox {
     this.h = h;
   }
 
-  centerX() { return this.x + this.w / 2; }
-  centerY() { return this.y + this.h / 2; }
+  centerX() {
+    return this.x + this.w / 2;
+  }
+  centerY() {
+    return this.y + this.h / 2;
+  }
   overlaps(other, threshold = 0.3) {
     const ix = Math.max(0, Math.min(this.x + this.w, other.x + other.w) - Math.max(this.x, other.x));
     const iy = Math.max(0, Math.min(this.y + this.h, other.y + other.h) - Math.max(this.y, other.y));
@@ -17,7 +21,9 @@ class BBox {
     const ua = this.w * this.h + other.w * other.h - ia;
     return ua > 0 && ia / ua > threshold;
   }
-  toString() { return `[${this.x},${this.y},${this.w},${this.h}]`; }
+  toString() {
+    return `[${this.x},${this.y},${this.w},${this.h}]`;
+  }
 }
 
 class Block {
@@ -34,9 +40,12 @@ class Block {
 
   clone() {
     return new Block({
-      text: this.text, confidence: this.confidence,
+      text: this.text,
+      confidence: this.confidence,
       bbox: this.bbox ? { x: this.bbox.x, y: this.bbox.y, w: this.bbox.w, h: this.bbox.h } : null,
-      page: this.page, order: this.order, source: this.source,
+      page: this.page,
+      order: this.order,
+      source: this.source,
     });
   }
 }
@@ -45,16 +54,19 @@ class Line {
   constructor({ blocks, text, bbox, page, order }) {
     this.id = uuidv4();
     this.blocks = blocks || [];
-    this.text = text || this.blocks.map(b => b.text).join(' ');
+    this.text = text || this.blocks.map((b) => b.text).join(' ');
     this.bbox = bbox || this._computeBBox();
-    this.page = page != null ? page : (blocks[0] ? blocks[0].page : 0);
+    this.page = page != null ? page : blocks[0] ? blocks[0].page : 0;
     this.order = order != null ? order : -1;
     this.type = 'line';
   }
 
   _computeBBox() {
     if (this.blocks.length === 0) return null;
-    let x = Infinity, y = Infinity, x2 = 0, y2 = 0;
+    let x = Infinity,
+      y = Infinity,
+      x2 = 0,
+      y2 = 0;
     for (const b of this.blocks) {
       if (b.bbox) {
         x = Math.min(x, b.bbox.x);
@@ -71,16 +83,19 @@ class Paragraph {
   constructor({ lines, text, bbox, page }) {
     this.id = uuidv4();
     this.lines = lines || [];
-    this.text = text || this.lines.map(l => l.text).join(' ');
+    this.text = text || this.lines.map((l) => l.text).join(' ');
     this.bbox = bbox || this._computeBBox();
-    this.page = page != null ? page : (lines[0] ? lines[0].page : 0);
+    this.page = page != null ? page : lines[0] ? lines[0].page : 0;
     this.type = 'paragraph';
     this.children = [];
   }
 
   _computeBBox() {
     if (this.lines.length === 0) return null;
-    let x = Infinity, y = Infinity, x2 = 0, y2 = 0;
+    let x = Infinity,
+      y = Infinity,
+      x2 = 0,
+      y2 = 0;
     for (const l of this.lines) {
       if (l.bbox) {
         x = Math.min(x, l.bbox.x);
@@ -181,7 +196,7 @@ class DocumentNode {
       title: this.title,
       text: this.text,
       level: this.level,
-      children: this.children.map(c => c.toJSON ? c.toJSON() : c),
+      children: this.children.map((c) => (c.toJSON ? c.toJSON() : c)),
       metadata: this.metadata,
     };
   }
@@ -196,7 +211,7 @@ class DocumentNode {
 }
 
 class Document {
-  constructor({ title, pages, metadata, sections, markdown, html, json, chunks, embedding }) {
+  constructor({ title, pages, metadata, sections, markdown, html, json, chunks, embedding, review }) {
     this.title = title || '';
     this.pages = pages || 0;
     this.metadata = metadata || {};
@@ -207,6 +222,7 @@ class Document {
     this.semanticJson = json || null;
     this.chunks = chunks || [];
     this.embedding = embedding || null;
+    this.review = review || null;
   }
 
   toJSON() {
@@ -214,10 +230,11 @@ class Document {
       title: this.title,
       pages: this.pages,
       metadata: this.metadata,
-      sections: this.sections.map(s => s.toJSON ? s.toJSON() : s),
+      sections: this.sections.map((s) => (s.toJSON ? s.toJSON() : s)),
       markdown: this.markdown,
       semanticJson: this.semanticJson,
       chunks: this.chunks,
+      review: this.review,
     };
   }
 }
@@ -234,5 +251,15 @@ const LEGAL_TYPES = {
 };
 
 module.exports = {
-  BBox, Block, Line, Paragraph, Heading, Table, ListItem, Node, DocumentNode, Document, LEGAL_TYPES,
+  BBox,
+  Block,
+  Line,
+  Paragraph,
+  Heading,
+  Table,
+  ListItem,
+  Node,
+  DocumentNode,
+  Document,
+  LEGAL_TYPES,
 };

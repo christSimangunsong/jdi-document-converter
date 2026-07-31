@@ -47,7 +47,9 @@ class PaddleEngine extends OcrEngine {
     if (this._instance) {
       try {
         await this._instance.close();
-      } catch (_) {}
+      } catch (_) {
+        /* abaikan error saat menutup instance */
+      }
       this._instance = null;
     }
   }

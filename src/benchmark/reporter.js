@@ -55,11 +55,12 @@ function buildHtmlReport(jsonData) {
 
   const engineColors = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6'];
 
-  const summaryRows = engineNames.map((name, i) => {
-    const s = summary[name];
-    if (!s) return '';
-    const color = engineColors[i % engineColors.length];
-    return `
+  const summaryRows = engineNames
+    .map((name, i) => {
+      const s = summary[name];
+      if (!s) return '';
+      const color = engineColors[i % engineColors.length];
+      return `
       <tr>
         <td style="color:${color};font-weight:bold">${name}</td>
         <td>${(s.avgCer * 100).toFixed(1)}%</td>
@@ -71,21 +72,23 @@ function buildHtmlReport(jsonData) {
         <td>${(s.avgStructureQuality * 100).toFixed(1)}%</td>
         <td>${s.docCount}</td>
       </tr>`;
-  }).join('');
+    })
+    .join('');
 
-  const bestCer = engineNames.length > 0
-    ? engineNames.reduce((a, b) => (summary[a].avgCer < summary[b].avgCer ? a : b))
-    : '-';
+  const bestCer =
+    engineNames.length > 0 ? engineNames.reduce((a, b) => (summary[a].avgCer < summary[b].avgCer ? a : b)) : '-';
 
-  const detailsSections = details.map((doc) => {
-    const docEngines = doc.engines.map((e, i) => {
-      const color = engineColors[i % engineColors.length];
-      if (e.error) {
-        return `<tr><td style="color:${color};font-weight:bold">${e.name}</td><td colspan="7" style="color:#e74c3c">ERROR: ${e.error}</td></tr>`;
-      }
-      if (!e.metrics) return '';
-      const m = e.metrics;
-      return `<tr>
+  const detailsSections = details
+    .map((doc) => {
+      const docEngines = doc.engines
+        .map((e, i) => {
+          const color = engineColors[i % engineColors.length];
+          if (e.error) {
+            return `<tr><td style="color:${color};font-weight:bold">${e.name}</td><td colspan="7" style="color:#e74c3c">ERROR: ${e.error}</td></tr>`;
+          }
+          if (!e.metrics) return '';
+          const m = e.metrics;
+          return `<tr>
         <td style="color:${color};font-weight:bold">${e.name}</td>
         <td>${(m.cer * 100).toFixed(1)}%</td>
         <td>${(m.wer * 100).toFixed(1)}%</td>
@@ -95,9 +98,10 @@ function buildHtmlReport(jsonData) {
         <td>${(m.tableQuality * 100).toFixed(1)}%</td>
         <td>${(m.structureQuality * 100).toFixed(1)}%</td>
       </tr>`;
-    }).join('');
+        })
+        .join('');
 
-    return `<div class="doc-section">
+      return `<div class="doc-section">
       <h3 onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'':'none'" style="cursor:pointer">📄 ${doc.name}</h3>
       <div style="display:none">
         <table><tr><th>Engine</th><th>CER</th><th>WER</th><th>Confidence</th><th>Speed (pg/s)</th><th>Layout</th><th>Table</th><th>Structure</th></tr>
@@ -105,22 +109,25 @@ function buildHtmlReport(jsonData) {
         </table>
       </div>
     </div>`;
-  }).join('');
+    })
+    .join('');
 
-  const barData = engineNames.map((name) => {
-    const s = summary[name];
-    return {
-      label: name,
-      cer: (s.avgCer * 100).toFixed(1),
-      wer: (s.avgWer * 100).toFixed(1),
-      layout: (s.avgLayoutQuality * 100).toFixed(1),
-      table: (s.avgTableQuality * 100).toFixed(1),
-      structure: (s.avgStructureQuality * 100).toFixed(1),
-      speed: s.avgSpeed.toFixed(1),
-      color: engineColors[engineNames.indexOf(name) % engineColors.length],
-    };
-  }).map((d) => {
-    return `<div class="bar-group">
+  const barData = engineNames
+    .map((name) => {
+      const s = summary[name];
+      return {
+        label: name,
+        cer: (s.avgCer * 100).toFixed(1),
+        wer: (s.avgWer * 100).toFixed(1),
+        layout: (s.avgLayoutQuality * 100).toFixed(1),
+        table: (s.avgTableQuality * 100).toFixed(1),
+        structure: (s.avgStructureQuality * 100).toFixed(1),
+        speed: s.avgSpeed.toFixed(1),
+        color: engineColors[engineNames.indexOf(name) % engineColors.length],
+      };
+    })
+    .map((d) => {
+      return `<div class="bar-group">
       <div class="bar-label">${d.label}</div>
       <div class="bars">
         <div class="bar-row"><span>CER</span><div class="bar-track"><div class="bar-fill" style="width:${d.cer}%;background:#e74c3c"></div></div><span>${d.cer}%</span></div>
@@ -130,12 +137,15 @@ function buildHtmlReport(jsonData) {
         <div class="bar-row"><span>Speed</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100, d.speed * 10)}%;background:#f39c12"></div></div><span>${d.speed} pg/s</span></div>
       </div>
     </div>`;
-  }).join('');
+    })
+    .join('');
 
-  const tableHtml = engineNames.map((name, i) => {
-    const color = engineColors[i % engineColors.length];
-    return `<span style="display:inline-block;width:12px;height:12px;background:${color};border-radius:2px;margin-right:4px"></span>${name}`;
-  }).join(' &nbsp; ');
+  const tableHtml = engineNames
+    .map((name, i) => {
+      const color = engineColors[i % engineColors.length];
+      return `<span style="display:inline-block;width:12px;height:12px;background:${color};border-radius:2px;margin-right:4px"></span>${name}`;
+    })
+    .join(' &nbsp; ');
 
   return `<!DOCTYPE html>
 <html lang="id">

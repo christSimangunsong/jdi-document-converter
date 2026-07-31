@@ -22,10 +22,14 @@ async function tryPpStructure(canvas) {
   try {
     const buf = canvas.toBuffer('image/png');
     const b64 = buf.toString('base64');
-    const resp = await axios.post(`${url}/analyze`, {
-      images: [b64],
-      lang: config.ocrLang || 'id',
-    }, { timeout: SIDECAR_TIMEOUT });
+    const resp = await axios.post(
+      `${url}/analyze`,
+      {
+        images: [b64],
+        lang: config.ocrLang || 'id',
+      },
+      { timeout: SIDECAR_TIMEOUT },
+    );
 
     if (!resp.data || !resp.data.pages || resp.data.pages.length === 0) return null;
 
@@ -37,11 +41,11 @@ async function tryPpStructure(canvas) {
       return {
         source: 'ppstructure',
         text: page.text || '',
-        tables: page.tables.map(t => ({
+        tables: page.tables.map((t) => ({
           html: t.html || '',
           confidence: t.confidence || 0,
         })),
-        confidence: Math.max(...page.tables.map(t => t.confidence || 0), 0),
+        confidence: Math.max(...page.tables.map((t) => t.confidence || 0), 0),
       };
     }
 
@@ -68,10 +72,14 @@ async function trySurya(canvas) {
   try {
     const buf = canvas.toBuffer('image/png');
     const b64 = buf.toString('base64');
-    const resp = await axios.post(`${suryaUrl}/analyze`, {
-      images: [b64],
-      lang: config.ocrLang || 'id',
-    }, { timeout: SIDECAR_TIMEOUT });
+    const resp = await axios.post(
+      `${suryaUrl}/analyze`,
+      {
+        images: [b64],
+        lang: config.ocrLang || 'id',
+      },
+      { timeout: SIDECAR_TIMEOUT },
+    );
 
     if (!resp.data || !resp.data.pages || resp.data.pages.length === 0) return null;
 
@@ -81,17 +89,17 @@ async function trySurya(canvas) {
     if (blocks.length < 5) return null;
 
     const avgConf = blocks.reduce((s, b) => s + (b.confidence || 0), 0) / blocks.length;
-    const digitBlocks = blocks.filter(b => {
-      const words = (b.text || '').split(/\s+/).filter(w => w.length > 0);
-      return words.length > 0 && words.every(w => /^[\d.,%Rp]+$/.test(w));
+    const digitBlocks = blocks.filter((b) => {
+      const words = (b.text || '').split(/\s+/).filter((w) => w.length > 0);
+      return words.length > 0 && words.every((w) => /^[\d.,%Rp]+$/.test(w));
     });
 
     if (digitBlocks.length > blocks.length * 0.2 || blocks.length > 15) {
       logger.info(`  Surya: ${blocks.length} blok terdeteksi, ${digitBlocks.length} numerik`);
       return {
         source: 'surya',
-        text: blocks.map(b => b.text).join('\n'),
-        blocks: blocks.map(b => ({
+        text: blocks.map((b) => b.text).join('\n'),
+        blocks: blocks.map((b) => ({
           text: b.text || '',
           confidence: b.confidence || 0,
           bbox: b.bbox || null,
@@ -114,7 +122,7 @@ async function detectTableHeuristic(canvas) {
     const pageText = text[0] || '';
     if (!pageText || pageText.trim().length < 20) return null;
 
-    const lines = pageText.split('\n').filter(l => l.trim().length > 0);
+    const lines = pageText.split('\n').filter((l) => l.trim().length > 0);
     if (lines.length < 3) return null;
 
     let digitLineCount = 0;
@@ -124,11 +132,11 @@ async function detectTableHeuristic(canvas) {
 
     for (const line of lines) {
       const trimmed = line.trim();
-      const words = trimmed.split(/\s+/).filter(w => w.length > 0);
+      const words = trimmed.split(/\s+/).filter((w) => w.length > 0);
       if (words.length < 2) continue;
       totalLines++;
 
-      const digitWords = words.filter(w => /^[\d.,%Rp]+$/.test(w));
+      const digitWords = words.filter((w) => /^[\d.,%Rp]+$/.test(w));
       if (digitWords.length > words.length * 0.4) {
         digitLineCount++;
       }
@@ -139,10 +147,10 @@ async function detectTableHeuristic(canvas) {
       prevColCount = words.length;
     }
 
-    const isTable = totalLines > 0 && (
-      (digitLineCount / totalLines > 0.3 && columnAligned) ||
-      lines.some(l => l.includes('No.') || l.includes('DESA') || l.includes('JUMLAH'))
-    );
+    const isTable =
+      totalLines > 0 &&
+      ((digitLineCount / totalLines > 0.3 && columnAligned) ||
+        lines.some((l) => l.includes('No.') || l.includes('DESA') || l.includes('JUMLAH')));
 
     if (isTable) {
       logger.info(`  Heuristic: tabel terdeteksi (${digitLineCount}/${totalLines} baris numerik)`);
@@ -183,11 +191,15 @@ function detectTableFromLines(lines) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const blocks = (line.blocks || []).filter(b => b.bbox && typeof b.bbox.x === 'number' && !isNaN(b.bbox.x));
-    if (blocks.length < 2) { flushTable(); continue; }
+    const blocks = (line.blocks || []).filter((b) => b.bbox && typeof b.bbox.x === 'number' && !isNaN(b.bbox.x));
+    if (blocks.length < 2) {
+      flushTable();
+      continue;
+    }
 
-    const cols = blocks.map(b => ({
-      x: b.bbox.x, w: b.bbox.w,
+    const cols = blocks.map((b) => ({
+      x: b.bbox.x,
+      w: b.bbox.w,
       text: b.text || '',
     }));
 
@@ -230,13 +242,11 @@ function colStructMatch(curr, prev) {
 }
 
 function buildTable(tableLines) {
-  const blockRows = tableLines.map(line =>
-    (line.blocks || []).filter(b => b.bbox && typeof b.bbox.x === 'number')
-  );
-  const maxCols = Math.max(...blockRows.map(r => r.length));
+  const blockRows = tableLines.map((line) => (line.blocks || []).filter((b) => b.bbox && typeof b.bbox.x === 'number'));
+  const maxCols = Math.max(...blockRows.map((r) => r.length));
   if (maxCols < 2) return null;
-  const normalized = blockRows.map(row => {
-    const cells = row.map(b => b.text || '');
+  const normalized = blockRows.map((row) => {
+    const cells = row.map((b) => b.text || '');
     while (cells.length < maxCols) cells.push('');
     return cells;
   });

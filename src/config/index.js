@@ -20,6 +20,11 @@ const config = {
     preprocessSteps: process.env.OCR_PREPROCESS_STEPS || 'grayscale,denoise,threshold',
     minimumConfidence: parseFloat(process.env.OCR_MIN_CONFIDENCE) || 0.3,
     lang: process.env.OCR_LANG || 'id',
+    engineFallback: process.env.OCR_ENGINE_FALLBACK !== 'false' && process.env.OCR_ENGINE_FALLBACK !== '0',
+    qualityGate: process.env.OCR_QUALITY_GATE !== 'false' && process.env.OCR_QUALITY_GATE !== '0',
+    minWordCount: parseInt(process.env.OCR_MIN_WORD_COUNT, 10) || 5,
+    maxGarbageRatio: parseFloat(process.env.OCR_MAX_GARBAGE_RATIO) || 0.4,
+    maxConfidenceRetries: parseInt(process.env.OCR_MAX_CONFIDENCE_RETRIES, 10) || 2,
   },
   db: {
     host: process.env.DB_HOST || 'localhost',
@@ -47,7 +52,10 @@ const config = {
   },
   deskew: {
     engine: process.env.DESKEW_ENGINE || 'auto',
-    serviceUrl: process.env.DESKEW_SERVICE_URL || process.env.STRUCTURE_SERVICE_URL ? process.env.STRUCTURE_SERVICE_URL.replace(':5000', ':5002') : '',
+    serviceUrl:
+      process.env.DESKEW_SERVICE_URL || process.env.STRUCTURE_SERVICE_URL
+        ? process.env.STRUCTURE_SERVICE_URL.replace(':5000', ':5002')
+        : '',
     minConfidence: parseFloat(process.env.DESKEW_MIN_CONFIDENCE) || 0.3,
     perspectiveCorrection: process.env.DESKEW_PERSPECTIVE === 'true' || process.env.DESKEW_PERSPECTIVE === '1',
     maxAngle: parseFloat(process.env.DESKEW_MAX_ANGLE) || 15,
@@ -60,6 +68,11 @@ const config = {
     detect: process.env.TABLE_DETECT !== 'false' && process.env.TABLE_DETECT !== '0',
     preserveGrid: process.env.TABLE_PRESERVE_GRID !== 'false' && process.env.TABLE_PRESERVE_GRID !== '0',
     splitCells: process.env.TABLE_SPLIT_CELLS !== 'false' && process.env.TABLE_SPLIT_CELLS !== '0',
+    renderScale: parseFloat(process.env.TABLE_RENDER_SCALE) || 3.0,
+  },
+  review: {
+    enabled: process.env.REVIEW_ENABLED !== 'false' && process.env.REVIEW_ENABLED !== '0',
+    maxIssues: parseInt(process.env.REVIEW_MAX_ISSUES, 10) || 50,
   },
 };
 

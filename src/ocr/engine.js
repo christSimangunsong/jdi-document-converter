@@ -1,5 +1,3 @@
-const config = require('../config');
-const logger = require('../services/logger');
 const { ocrRouter } = require('./router');
 
 async function performOcr(imageBuffers, onProgress) {

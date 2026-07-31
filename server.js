@@ -16,6 +16,9 @@ const { cleanText } = require('./src/utils/textCleaner');
 const { rebuildDocumentStructure } = require('./src/utils/DocumentStructureRebuilder');
 const { runReconstruction } = require('./src/reconstruction');
 const { performOcrBlocks } = require('./src/ocr/engine');
+const { detectTableRegions } = require('./src/ocr/tableRegionOcr');
+const { deskewImage } = require('./src/ocr/deskewRouter');
+const { correctOrientation } = require('./src/ocr/orientationDetector');
 const activityLogger = require('./src/services/activityLogger');
 const { generateXlsxReport } = require('./src/services/reportExporter');
 
@@ -25,6 +28,34 @@ const upload = multer({ dest: 'uploads/', limits: { fileSize: 200 * 1024 * 1024 
 app.use(express.static('public'));
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+
+async function renderPdfImagesWithTableBoost(pdfBuffer) {
+  const { images: lowImages } = await convertPdfToImages(pdfBuffer, { scale: 1.0 });
+  const tablePages = new Set();
+
+  if (config.table && config.table.detect !== false) {
+    for (let i = 0; i < lowImages.length; i++) {
+      let img = lowImages[i];
+      try {
+        img = await correctOrientation(img);
+        img = await deskewImage(img, { skipOsd: true });
+      } catch (err) {
+        logger.warn(`  Rectify halaman ${i + 1} gagal: ${err.message}, deteksi tanpa koreksi`);
+      }
+      if (detectTableRegions(img).length > 0) tablePages.add(i + 1);
+    }
+  }
+
+  const scale = config.pdfRenderScale || 2.0;
+  const tableScale = config.table ? config.table.renderScale || 3.0 : 3.0;
+  const { images, pageCount } = await convertPdfToImages(pdfBuffer, { scale, tablePages, tableScale });
+
+  if (tablePages.size > 0) {
+    logger.info(`  ${tablePages.size} halaman tabel di-render di scale ${tableScale}x (base ${scale}x)`);
+  }
+
+  return { images, pageCount, tablePages };
+}
 
 function extractFileNameFromUrl(url) {
   try {
@@ -79,7 +110,7 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
       if (config.reconstruction && config.reconstruction.enabled) {
         let ocrBlocks = [];
         if (detection.type !== 'TEXT') {
-          const { images, pageCount: imgPageCount } = await convertPdfToImages(pdfBuffer, { adaptive: true });
+          const { images, pageCount: imgPageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
           result.pageCount = imgPageCount;
           if (onProgress) onProgress(0.1);
           ocrBlocks = await performOcrBlocks(images, (page, total) => {
@@ -90,11 +121,18 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
         if (onProgress) onProgress(0.55);
 
         const doc = await runReconstruction(pdfBuffer, ocrBlocks, {
-          onProgress: (pct, msg) => {
+          onProgress: (pct, _msg) => {
             if (onProgress) onProgress(0.55 + pct * 0.4);
           },
           ocrEngine: config.ocr ? config.ocr.engine : 'paddle',
         });
+        const reviewData = doc.review
+          ? {
+              score: doc.review.score,
+              issueCount: doc.review.issueCount,
+              issues: doc.review.issues.slice(0, 10),
+            }
+          : null;
         result.text = doc.markdown;
         result.reconstruction = {
           chunks: doc.chunks ? doc.chunks.length : 0,
@@ -102,6 +140,7 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
           html: doc.html,
           json: doc.semanticJson,
           duration: doc.metadata ? doc.metadata.duration : null,
+          review: reviewData,
         };
 
         if (onProgress) onProgress(0.95);
@@ -113,7 +152,7 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
           result.text = extracted.text;
           if (onProgress) onProgress(0.85);
         } else {
-          const { images, pageCount } = await convertPdfToImages(pdfBuffer, { adaptive: true });
+          const { images, pageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
           result.pageCount = pageCount;
           if (onProgress) onProgress(0.15);
 
@@ -122,6 +161,13 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
           });
           result.text = ocrResults.join('\n\n');
           result.ocrStatus = 'BERHASIL';
+          if (ocrResults.pageQuality) {
+            const lowPages = ocrResults.pageQuality.filter((p) => p.lowQuality).map((p) => p.page);
+            if (lowPages.length > 0) {
+              logger.warn(`  ${lowPages.length} halaman kualitas rendah (LOW QUALITY): ${lowPages.join(', ')}`);
+              result.text += `\n\n[CATATAN: ${lowPages.length} halaman (${lowPages.join(', ')}) berkualitas rendah — LOW QUALITY, periksa hasil OCR]`;
+            }
+          }
         }
 
         const cleanedText = cleanText(result.text);
@@ -235,15 +281,20 @@ app.post('/process-urls', async (req, res) => {
         const fileHash = computeHash(pdfBuffer);
         send('progress', { pct: Math.round(basePct + filePct * 0.15) });
 
-        const result = await processBuffer(pdfBuffer, fileName, {
-          sourceType: 'url',
-          sourceUrl: url,
-          originalName: fileName,
-          fileHash,
-        }, (inner) => {
-          const pct = basePct + filePct * (0.15 + inner * 0.85);
-          send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
-        });
+        const result = await processBuffer(
+          pdfBuffer,
+          fileName,
+          {
+            sourceType: 'url',
+            sourceUrl: url,
+            originalName: fileName,
+            fileHash,
+          },
+          (inner) => {
+            const pct = basePct + filePct * (0.15 + inner * 0.85);
+            send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
+          },
+        );
         result.index = i;
         send('progress', { pct: Math.round(basePct + filePct) });
         send('result', result);
@@ -287,7 +338,6 @@ app.post('/process-upload', upload.single('pdf'), async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error(`[WEB] Error upload: ${error.message}`);
-    const origName = req.file ? req.file.originalname : 'unknown';
     const fileName = req.file ? req.body.nama || path.parse(req.file.originalname).name : 'unknown';
     if (req.file) await fs.remove(req.file.path).catch(() => {});
     res.json({ status: 'GAGAL', error: error.message, durasi: '0.0 dtk', fileName });
@@ -345,14 +395,19 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
         send('progress', { pct: Math.round(basePct + filePct * 0.15) });
 
         logger.info(`[WEB Batch ${i + 1}/${n}] Memproses file: ${file.originalname}`);
-        const result = await processBuffer(pdfBuffer, fileName, {
-          sourceType: 'upload',
-          originalName: file.originalname,
-          fileHash,
-        }, (inner) => {
-          const pct = basePct + filePct * (0.15 + inner * 0.85);
-          send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
-        });
+        const result = await processBuffer(
+          pdfBuffer,
+          fileName,
+          {
+            sourceType: 'upload',
+            originalName: file.originalname,
+            fileHash,
+          },
+          (inner) => {
+            const pct = basePct + filePct * (0.15 + inner * 0.85);
+            send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
+          },
+        );
         result.index = i;
         result.originalName = file.originalname;
         send('progress', { pct: Math.round(basePct + filePct) });
@@ -610,7 +665,7 @@ app.get('/api/report/download', async (req, res) => {
   }
 });
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   if (err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'Request terlalu besar', detail: err.message });
   }

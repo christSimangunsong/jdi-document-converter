@@ -13,8 +13,15 @@ const LEGAL_PATTERNS = {
 };
 
 const DOCUMENT_TYPE_ORDER = [
-  'UNDANG_UNDANG', 'PERPU', 'PERATURAN', 'KEPUTUSAN', 'INSTRUKSI',
-  'SURAT_EDARAN', 'PENETAPAN', 'PERDES', 'PERKADES',
+  'UNDANG_UNDANG',
+  'PERPU',
+  'PERATURAN',
+  'KEPUTUSAN',
+  'INSTRUKSI',
+  'SURAT_EDARAN',
+  'PENETAPAN',
+  'PERDES',
+  'PERKADES',
 ];
 
 const MENIMBANG = /^Menimbang\s*:/i;
@@ -82,7 +89,7 @@ const legalParser = {
 
   _inferStructure(root) {
     let pasalCounter = 0;
-    let hasBab = root.children.some(c => c.type === 'bab');
+    let hasBab = root.children.some((c) => c.type === 'bab');
     this._walk(root, (node) => {
       if (node.type === 'pasal' && node.number) {
         pasalCounter++;

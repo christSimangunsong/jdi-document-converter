@@ -79,7 +79,9 @@ class TesseractEngine extends OcrEngine {
     if (this._worker) {
       try {
         await this._worker.terminate();
-      } catch (_) {}
+      } catch (_) {
+        /* abaikan error saat menutup worker */
+      }
       this._worker = null;
     }
   }

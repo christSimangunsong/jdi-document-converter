@@ -1,12 +1,5 @@
 const logger = require('../../services/logger');
 
-const MAGIC_NUMS = {
-  '%PDF': 'pdf',
-  '\x25\x50\x44\x46': 'pdf',
-};
-
-const PAGE_SIZE_THRESHOLD = 500;
-
 const documentAnalyzer = {
   async analyze(pdfBuffer, ocrBlocks) {
     const pdfInfo = this._detectPdfType(pdfBuffer);
@@ -56,16 +49,16 @@ const documentAnalyzer = {
     let wordCount = 0;
     let hasTables = false;
     for (const b of blocks) {
-      const words = (b.text || '').split(/\s+/).filter(w => w.length > 0);
+      const words = (b.text || '').split(/\s+/).filter((w) => w.length > 0);
       wordCount += words.length;
-      if (words.length > 3 && words.every(w => /^\d+$/.test(w))) hasTables = true;
+      if (words.length > 3 && words.every((w) => /^\d+$/.test(w))) hasTables = true;
       if (b.type === 'table') hasTables = true;
     }
     return { wordCount, hasTables };
   },
 
   _isDigitalPdf(buffer, ocrBlocks) {
-    if (ocrBlocks && ocrBlocks.length > 0 && ocrBlocks.some(b => b.source === 'pdf-text')) return true;
+    if (ocrBlocks && ocrBlocks.length > 0 && ocrBlocks.some((b) => b.source === 'pdf-text')) return true;
     if (!buffer || buffer.length < 100) return false;
     const content = buffer.toString('latin1');
     const textOps = (content.match(/\([^)]{3,}\)/g) || []).length;

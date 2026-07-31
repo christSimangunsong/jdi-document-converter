@@ -17,7 +17,7 @@ const visualDebugger = {
     }
 
     if (ctx.lines && ctx.lines.length > 0) {
-      const linesData = ctx.lines.map(l => ({
+      const linesData = ctx.lines.map((l) => ({
         order: l.order,
         text: l.text,
         page: l.page,
@@ -73,7 +73,7 @@ const visualDebugger = {
       `<div class="node ${cls}" style="margin-left:${depth * 20}px">`,
       `  <span class="meta">[${node.type}]${node.number ? ' #' + node.number : ''}</span>`,
       `  <span class="text">${this._esc(text)}</span>`,
-      `</div>`
+      `</div>`,
     );
     if (node.children) {
       for (const c of node.children) this._renderNodeHtml(c, lines, depth + 1);

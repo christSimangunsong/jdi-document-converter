@@ -1,177 +1,183 @@
-# AGENTS.md — jdi-document-converter
+# CHANGELOG - jdi-document-converter
 
-> Compact instructions for OpenCode sessions. Full progress log (changelog): **`CHANGELOG.md`** — add new entries there (top of file). The v1–v17 history is also preserved below the `---` divider (nothing deleted).
->
-> For an even shorter version, see `AGENTS_QUICK.md`.
-
-## Architecture
-
-| Entry | File | Reconstruction | DB save |
-|-------|------|----------------|---------|
-| CLI | `app.js` | Legacy (stops after `cleanText()`) | No |
-| Web | `server.js` | **Legacy** (`RECONSTRUCTION_ENABLED=false`, default) **or Pipeline** (`RECONSTRUCTION_ENABLED=true`) | `POST /api/activities/save` |
-
-**Pipeline** (RECONSTRUCTION_ENABLED=true): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `convertPdfToImages→performOcrBlocks`] → `runReconstruction` → Markdown/HTML/JSON/Chunks
-
-**Legacy** (default): `downloadPdf` → `detectPdfType` → `extractText` (TEXT) / `convertPdfToImages→performOcr|performStructuredOcr` (SCAN) → `cleanText` → `rebuildDocumentStructure` → output `.txt`
-
-## Commands
-
-| Command | Function |
-|---------|----------|
-| `npm start` | Web server `localhost:3000` |
-| `npm run cli` | CLI batch from `data/links.json` |
-| `npm test` | `node --experimental-vm-modules test.js` (113 unit tests) |
-| `npm run lint` | `eslint .` |
-| `npm run format` | `prettier --write "**/*.{js,json,css,html}"` |
-| `npm run benchmark` | Run OCR engine benchmarks |
-
-## Routes (Web)
-
-| Method | Path | Notes |
-|--------|------|-------|
-| POST | `/process-url` | Body `{url, nama?}` |
-| POST | `/process-urls` | `{urls:[]}` (max 20) **SSE streaming FIFO** |
-| POST | `/process-upload` | Multipart field `pdf` |
-| POST | `/process-uploads` | Multipart field `pdf` (max 20) **SSE streaming FIFO** |
-| GET | `/download/:file` | Download `.txt` from `config.outputDir` |
-| GET | `/api/activities` | List activities |
-| GET | `/api/activities/stats` | Summary + daily group 7 days |
-| GET | `/api/activities/:id` | Detail by ID |
-| POST | `/api/activities/save` | Save text + metadata to DB (JSON body) |
-| DELETE | `/api/activities/:id` | Delete activity + `.txt` file |
-| GET | `/api/report/download` | `?from=&to=&format=xlsx\|csv` |
-
-Batch routes use SSE streaming (events: `progress`, `result`, `error`, `done`). Single routes return JSON.
-
-## CJS / ESM Hybrid
-
-CJS project (`require`) with **3 dynamic ESM imports**. Do NOT convert to `require()` — will error.
-
-| File | Dynamic import |
-|------|---------------|
-| `src/pdf/imageConverter.js:11` | `import('pdfjs-dist/legacy/build/pdf.mjs')` |
-| `src/pdf/imageConverter.js:26` | `import('@napi-rs/canvas')` |
-| `src/ocr/engines/paddleEngine.js:13` | `import('ppu-paddle-ocr')` |
-
-## Gotcha — Buffer/Uint8Array/Canvas
-
-`pdfjs-dist` v4 and `ppu-paddle-ocr` require `Uint8Array`/`Canvas`, reject `Buffer`.
-
-- `imageConverter.js:34` — `new Uint8Array(buffer)` before `pdfjs.getDocument()`
-- `imageConverter.js:79` — push `Canvas` directly, avoid `toBuffer()`
-- `paddleEngine.js:25` — `recognize()` accepts `Canvas` (which has `.toBuffer()`)
-- `imageConverter.js:11-18` — pdfjs-dist worker path resolved from `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
-
-## Status & Duplication
-
-`processBuffer()` returns status: `BERHASIL`, `GAGAL`, `RUSAK`, `KOSONG`.
-
-- 0 byte → **KOSONG**; pipeline throws → **RUSAK**; `cleanText()` empty → **KOSONG**; download fails → **GAGAL**
-- SHA256 hash checked at `POST /api/activities/save`: if hash exists AND `output_text IS NOT NULL` → DUPLICATE, rejected
-- `getActivities()` / `getStats()` only return records with `output_text IS NOT NULL`
-
-## OCR Engine
-
-Pluggable architecture in `src/ocr/`:
-
-| Engine | Class | Type | Config value |
-|--------|-------|------|-------------|
-| PaddleOCR | `paddleEngine.js` | Local (default) | `paddle` |
-| Tesseract.js | `tesseractEngine.js` | Local | `tesseract` |
-| Surya | `suryaEngine.js` | Sidecar (`surya-sidecar:5001`) | `surya` |
-
-- `OCR_ENGINE=paddle|tesseract|surya|auto` in `.env` (default: `paddle`)
-- `auto` tries surya → tesseract → paddle fallback
-- Interface: `init()`, `recognize(image)`, `recognizePage(image)`, `recognizeBlocks(image)` (returns structured blocks with bbox+confidence), `destroy()`
-- `performOcrBlocks()` used by Reconstruction pipeline
-
-## Sidecars
-
-| Sidecar | Port | Service | Purpose |
-|---------|------|---------|---------|
-| PP-StructureV3 | 5000 | `sidecar/main.py` (FastAPI) | Layout-aware OCR + table recognition |
-| Surya | 5001 | `sidecar/surya/` | Alternative OCR engine |
-| Deskew | 5002 | `sidecar/deskew.py` (FastAPI) | Hough Transform skew detection + perspective correction |
-
-- PP-StructureV3: `POST /analyze` accepts base64 images, returns per-page text + table HTML
-- If `STRUCTURE_SERVICE_URL` unset or unreachable → fallback to modular OCR engine
-- Surya: used when `OCR_ENGINE=surya`
-- Per-page error: failed pages return empty text, remaining pages continue
-
-## Image Preprocessor
-
-`src/ocr/preprocessor.js` — enabled via `OCR_PREPROCESS=true`:
-- `grayscale`, `denoise` (3×3 median), `threshold` (adaptive), `deskew`
-
-Steps configured via `OCR_PREPROCESS_STEPS=grayscale,denoise,threshold` (comma-separated).
-
-## Benchmark
-
-`npm run benchmark -- --dir ./benchmark/test-set --engines paddle,tesseract,surya`
-
-- Each document needs paired `.pdf` + `.gt.txt` (ground truth)
-- Metrics: CER, WER, confidence, speed (pg/s), layout/table/structure quality
-- Output: `benchmark/results/` (HTML + JSON)
-
-## Configuration
-
-`.env` variables (see `src/config/index.js` for defaults):
-
-| Group | Key variables |
-|-------|--------------|
-| Paths | `OUTPUT_DIR`, `LOG_DIR`, `linksPath` hardcoded to `./data/links.json` |
-| Retry | `MAX_RETRIES` (3), `RETRY_DELAY_MS` (2000), `DOWNLOAD_TIMEOUT` (60000) |
-| OCR | `OCR_ENGINE`, `OCR_LANG` (id), `OCR_PREPROCESS`, `OCR_PREPROCESS_STEPS` (`grayscale,threshold,rotate,deskew-adaptive,perspective`), `OCR_MIN_CONFIDENCE` (0.3), `OCR_MAX_CONFIDENCE_RETRIES` (2), `OCR_ENGINE_FALLBACK` (true), `OCR_QUALITY_GATE` (true), `OCR_MIN_WORD_COUNT` (5), `OCR_MAX_GARBAGE_RATIO` (0.4) |
-| PDF | `PDF_RENDER_SCALE` (2.0) |
-| Deskew | `DESKEW_ENGINE` (auto), `DESKEW_SERVICE_URL`, `DESKEW_MIN_CONFIDENCE` (0.3), `DESKEW_PERSPECTIVE` (true), `DESKEW_MAX_ANGLE` (15) |
-| Projection | `PROJECTION_MIN_RATIO` (1.8), `PROJECTION_AMBIGUOUS_THRESHOLD` (0.65) |
-| OSD | `OSD_ENABLED` (true), `OSD_MIN_CONFIDENCE` (8), `OSD_TIMEOUT` (5000) |
-| Perspective | `PERSPECTIVE_ENABLED` (true), `PERSPECTIVE_MIN_AREA` (0.2) |
-| Table | `TABLE_DETECT` (true), `TABLE_PRESERVE_GRID` (true), `TABLE_SPLIT_CELLS` (true), `TABLE_RENDER_SCALE` (3.0) |
-| DB | `DB_HOST/USER/PASSWORD/NAME/PORT` |
-| Sidecar | `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT` (120s), `SURYA_SERVICE_URL`, `DESKEW_SERVICE_URL` |
-| Pipeline | `RECONSTRUCTION_ENABLED` (false), `RECONSTRUCTION_DEBUG` (false), `RECONSTRUCTION_DEBUG_DIR` (`./debug`), `RECONSTRUCTION_CHUNK_SIZE` (1000), `RECONSTRUCTION_CHUNK_OVERLAP` (200), `RECONSTRUCTION_OUTPUT_FORMAT` (markdown) |
-| Review | `REVIEW_ENABLED` (true), `REVIEW_MAX_ISSUES` (50) |
-
-- File name from URL: `extractFileNameFromUrl()` — last segment, strip `.pdf`, sanitize, max 200 chars. Spaces encoded `%20` then `decodeURIComponent()`
-- File name from upload: `path.parse(file.originalname).name`
-- Multer saves to `uploads/`, cleaned after processing
-
-## Notes
-
-- All logs/comments in **Bahasa Indonesia**
-- `data/links.json` format: `[{id, url, nama}]` — required for CLI
-- **Test quirk**: `test.js` defines 117 tests but `npm test` reports 113 — the 4 `testAsync` (withRetry) tests are never awaited and `process.exit()` is synchronous, so they never finish. Don't trust the file count; trust `npm test` output
-- Retry: exponential backoff `delayMs * attempt` (`src/utils/retry.js:19`)
-- `pdf-parse` (CJS) for text PDF detection & extraction
-- `@napi-rs/canvas` (not `node-canvas`) for PDF-to-Canvas rendering
-- **Orientation correction** (opt-in): add `rotate` to `OCR_PREPROCESS_STEPS` to enable 90° rotation correction via projection peak analysis. Not enabled by default. See `src/ocr/orientationDetector.js`
-- **Deskew adaptif multi-engine** (`src/ocr/deskewRouter.js`): cascading engine — **Tesseract OSD dulu (orientasi 0/90/180/270°)** → **Hough-lite pure-JS** (±15°, step 0.5°, downsample ≤1MP, `detectSkewHoughLite`) → Hough sidecar OpenCV (±30°) → Projection profile (±5°, fallback). OSD duluan karena hough-lite pada halaman rotasi 90° bisa menemukan sudut kecil palsu dan return lebih awal (OSD terlewat). Opsi `deskewImage(canvas, {skipOsd:true})` untuk jalur fine-deskew saja (deteksi grid pass 1, crop sel repair); OSD punya timeout `OSD_TIMEOUT` + downscale ≤1MP. Dikontrol via `DESKEW_ENGINE=auto|hough|tesseract|projection`. Koreksi rotasi `rotateCanvas(-angle)` (konvensi OpenCV). Sidecar: `sidecar/deskew.py` port 5002 dengan endpoint `/detect-skew`, `/deskew`, `/correct-perspective`, `/deskew-full` — jika `DESKEW_SERVICE_URL` kosong → perspective no-op aman.
-- **Rectify sebelum deteksi tabel** (`server.js` `renderPdfImagesWithTableBoost`): pass 1 render scale 1.0 → tiap halaman di-rectify dulu (`correctOrientation` + `deskewImage({skipOsd:true})`) → baru `detectTableRegions()`. Sebelumnya deteksi grid di gambar mentah — grid miring tidak menutupi baris/kolom penuh (densitas ≥ 60%) → 0 region → halaman tidak di-render `TABLE_RENDER_SCALE` (3.0). `repairTableBlocks` (router.js) kini pakai gambar ter-rectify (`_preprocessedCache[i][bestRetry]`).
-- **Confidence-based retry** (`src/ocr/qualityMetrics.js` + `src/ocr/router.js`): tiap halaman di-scoring (confidence, garbageRatio, wordCount). Retry bervariasi: retry 0 = steps default, retry 1 = +`upscale` 1.5×, retry 2 = +`upscale` 3.0× + `denoise`; engine alternatif (`auto` → surya→tesseract→paddle) hanya di retry terakhir — **preprocessing/DPI didahulukan, engine diganti untuk kasus italic/tipis**. `OCR_MAX_CONFIDENCE_RETRIES=2`. Fungsi: `computePageScore`, `shouldRetry`, `selectRetryStrategy`, `_stepsForRetry`.
-- **Garbage CJK** (`src/ocr/qualityMetrics.js`): `isGarbageWord()` mendeteksi kata sampah dari OCR teks miring — CJK murni pendek (楼), campuran Latin+CJK ≤ 4 char (Q楼), digit+CJK ≤ 6 char → dihitung garbage → memicu retry (sebelumnya lolos karena hanya digit pendek yang dihitung)
-- **Region OCR tabel** (`src/ocr/tableRegionOcr.js`): `detectTableRegions(canvas)` — deteksi grid berbasis piksel (run-length horizontal/vertikal, densitas ≥ 60%, merge region gap < 10px); `ocrTableRegions()` — crop + padding 12px → upscale 2× → deskew (`skipOsd`) → grayscale+threshold → OCR per region; `repairTableBlocks()` dipanggil di `_recognizePageCascade` setelah retry dengan **gambar ter-rectify** — blok garbage dalam region tabel diganti blok hasil OCR region (score dihitung ulang)
-- **Table render boost** (`server.js` `renderPdfImagesWithTableBoost`): pass 1 render scale 1.0 → deteksi grid tiap halaman → halaman bertabel di-render ulang `TABLE_RENDER_SCALE` (3.0), lainnya `PDF_RENDER_SCALE` (2.0). Ganti `convertPdfToImages({adaptive:true})` lama yang `tablePages`-nya selalu kosong.
-- **Composite page score** (`src/ocr/qualityMetrics.js`): `computeQualityScore(blocks)` = `0.5*conf + 0.35*(1-garbageRatio) + 0.15*min(wordCount/20,1)`; `shouldAcceptPage()` gate per halaman (minWordCount 5, minConfidence 0.3, maxGarbageRatio 0.4, minQualityScore 0.3)
-- **Engine cascade** (`src/ocr/router.js`): tiap retry coba semua engine kandidat (preferred dulu, `auto` → surya→tesseract→paddle), hasil terbaik (skor komposit) disimpan; `results.pageQuality[]` berisi `{page, accepted, lowQuality, score, ...}`; blok yang gagal diterima diberi `quality:'low'` (teks **tetap dipakai**, hanya ditandai); legacy path menambahkan catatan `[CATATAN: N halaman LOW QUALITY]` di akhir teks
-- **Document review** (`src/reconstruction/review/documentReviewer.js`): stage pipeline progres 0.7 → `doc.review = {score, issueCount, issues}` (laporan saja, tidak auto-fix). Severity: error 0.25 / warning 0.10 / info 0.03, skor = `max(0, 1-bobot)`, issue dipangkas `REVIEW_MAX_ISSUES`. Tipe: `bab-order`, `bab-duplicate`, `pasal-order`, `pasal-duplicate`, `ayat-order`, `ayat-start`, `heading-parent`, `orphan-ayat`, `orphan-item`, `table-empty`, `table-position`, `title-missing`, `preamble-missing`, `page-order`, `low-quality`; di-expose di `result.reconstruction.review` (top 10)
-- **Tree builder** (`src/reconstruction/builder/documentTreeBuilder.js`): hierarki heading stack-based (BAB=1, BAGIAN=2, PARAGRAF=3, PASAL=4 push/pop; `while (stack.length - 1 >= level) pop` — BAB II jadi sibling BAB I); pasal di-pop sebelum pasal baru; paragraf di-flush saat ganti halaman/kosong/marker `(n)`/`a.`; grup diberi `pos` (startIdx asli) + sort → **tabel interleave di posisi aslinya** (bukan di akhir); deteksi judul (`^(PERATURAN|KEPUTUSAN|UNDANG-UNDANG|INSTRUKSI|NOTA KESEPAHAMAN|MEMORANDUM)` + panjang ≥ 25 atau NOMOR/TAHUN/TENTANG → node `title` level 0, render bold di markdown/HTML)
-- **Adaptive DPI rendering** (`src/ocr/adaptiveRenderer.js`): halaman tabel di-render di scale 1.5×–2.5× dari base `PDF_RENDER_SCALE`. Retry meningkatkan scale otomatis. Cache render per page+scale.
-- **Image converter per-page** (`src/pdf/imageConverter.js`): `renderPage(pdfDoc, pageNum, scale)` untuk render halaman individual. `convertPdfToImages()` support `{adaptive: true, tablePages: Set}`.
-- **Table detection multi-engine** (`src/ocr/tableDetector.js`): PP-StructureV3 (port 5000) → Surya (port 5001) → heuristic (digit line + column alignment analysis). `detectTableStructure(canvas)` return source/confidence/tables.
-- **Cell-level OCR** (`src/ocr/cellOcr.js`): crop cell dari full-page canvas → OCR 2× scale → format ASCII table via `reconstructTableFromBlocks(blocks)` dan `formatAsciiTable(rows)`. `ocrTableCell(canvas, bbox, engine)`.
-- `performStructuredOcr()` (`src/services/structureService.js`): selalu coba PP-StructureV3 → Surya → standard OCR secara berjenjang.
-- Per-page error handling: `imageConverter.js` and `engine.js` **skip** failed pages (blank canvas / empty string), do NOT abort the whole document
-- **ESLint**: `eslint:recommended`, 2-space indent, single quotes, comma-dangle always-multiline
-- **Prettier**: singleQuote, trailingComma all, printWidth 120, tabWidth 2, endOfLine lf
-- **CI**: GitHub Actions on push/PR to `main`, Node 18 & 20 matrix, `npm ci` → `npm run lint` → `npm test` (with `NODE_OPTIONS=--experimental-vm-modules`)
-- **Docker**: `node:20-slim`, tini entrypoint, `npm ci --only=production`, EXPOSE 3000
-- **docker-compose**: 5 services (app + sidecar + surya-sidecar + deskew-sidecar + MySQL 8), healthcheck DB, persistent volumes
+> Log progres proyek ini. Setiap update menambahkan entri baru di bagian paling atas (## Changelog - TANGGAL (vN)).
+> Riwayat v1-v17 di bawah ini adalah salinan utuh dari AGENTS.md - tidak ada yang dihapus.
 
 ---
 
-> **Progres log**: riwayat lengkap v1–v17 di bawah (dan terus bertambah di `CHANGELOG.md` — entri baru ditambahkan ke atas file tersebut).
+## Changelog — 2026-07-31 (v21)
+
+### ringkasan
+Perbaikan **deteksi tabel miring**: rectification dilakukan SEBELUM deteksi grid tabel (bukan setelah), kaskade deskew diubah menjadi **OSD (0/90/180/270°) dulu → hough-lite → sidecar OpenCV → projection** agar halaman terrotasi 90° tidak tertahan oleh sudut palsu hough-lite, sidecar deskew (OpenCV ±30° + perspective) diaktifkan via `DESKEW_SERVICE_URL`, dan repair tabel kini memakai gambar yang sudah ter-rectify.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/deskewRouter.js` | kaskade: hough-lite → sidecar → OSD → projection (OSD terakhir, bisa terlewat) | kaskade **OSD dulu** (0/90/180/270°) → hough-lite (±15°) → sidecar (±30°) → projection; + opsi `skipOsd` (deteksi grid tidak butuh OSD); `_toOsdCanvas()` downscale ≤1MP; OSD timeout `config.osd.timeout` via `Promise.race` |
+| `server.js` | `renderPdfImagesWithTableBoost`: `detectTableRegions()` di gambar **mentah** → grid miring tidak terdeteksi | tiap halaman di-rectify dulu (`correctOrientation` + `deskewImage({skipOsd:true})`) **sebelum** `detectTableRegions()` → halaman tabel miring masuk `tablePages` → render 3.0× + jalur repair aktif |
+| `src/ocr/router.js` | `repairTableBlocks(imageBuffers[i])` — canvas **mentah** | repair pakai gambar ter-rectify dari `_preprocessedCache[i][bestRetry]` (fallback raw); `_stepsForRetry` retry 2 = +`upscale`+`denoise`+**`perspective`** |
+| `src/ocr/tableRegionOcr.js` | `repairTableBlocks` detect region di canvas asli; crop deskew full-cascade (OSD per sel — lambat) | + deskew defensif (`skipOsd`) di awal `repairTableBlocks`; crop deskew pakai `skipOsd` (sel tidak mungkin rotasi 90° sendiri) |
+| `.env` | `OCR_PREPROCESS_STEPS=grayscale,threshold,rotate,deskew-adaptive,perspective`; `DESKEW_SERVICE_URL=` (kosong) | steps: `rotate,deskew-adaptive,perspective,grayscale,threshold` — rectify dulu di gambar berwarna, binarize terakhir; `DESKEW_SERVICE_URL=http://localhost:5002` (sidecar hidup) |
+| `test.js` | 126 tes | + 3 tes = **129 passed**: `detectTableRegions` grid miring → 0 region (dokumentasi bug), kontras grid 0° vs miring 4°, `detectSkewHoughLite` deteksi sudut grid |
+
+### detail
+
+**Kaskade deskew baru** (`deskewImage`):
+```
+OSD (0/90/180/270°) → hough-lite (±15°) → sidecar OpenCV (±30°) → projection (±5°)
+```
+- OSD dulu karena hough-lite pada halaman yang terrotasi 90° bisa menemukan sudut kecil palsu (baris teks vertikal), lalu rotate ±3° dan return lebih awal — OSD tidak pernah dieksekusi, halaman tetap miring 90°.
+- Jika OSD menemukan orientasi ≠ 0 dengan confidence ≥ ambang → rotasi langsung, hough di-skip.
+- `skipOsd: true` untuk jalur yang hanya butuh fine-deskew (deteksi grid pass 1, crop sel repair) — menghindari biaya Tesseract worker per halaman/sel.
+
+**Rectify sebelum deteksi grid** (`renderPdfImagesWithTableBoost`):
+- Pass 1 (scale 1.0): `correctOrientation` (landscape → -90°) + `deskewImage({skipOsd:true})` per halaman → baru `detectTableRegions()`.
+- Sebelumnya `_detectHorizLines`/`_detectVertLines` menscan baris/kolom penuh (densitas ≥ 60%): grid miring hanya menutupi diagonal → 0 region → halaman tidak diklasifikasi tabel → tidak di-render 3.0× dan repair tidak jalan.
+
+**Sidecar deskew aktif**: `DESKEW_SERVICE_URL=http://localhost:5002` — Hough OpenCV ±30° (melampaui hough-lite ±15°) dan `correct-perspective` tidak lagi no-op. Jalankan: `python sidecar/deskew.py` atau `docker-compose up deskew-sidecar`. Fallback aman jika mati.
+
+---
+
+## Changelog — 2026-07-31 (v20)
+
+### ringkasan
+Perbaikan OCR untuk **dokumen scan dengan tabel miring**: Hough-lite pure-JS untuk deskew sudut ±15° (tanpa sidecar), perspective correction diaktifkan, OCR per-region tabel (bukan whole page), render scale lebih tinggi untuk halaman scan & halaman tabel, retry yang benar-benar bervariasi (preprocessing → DPI → engine), dan deteksi garbage CJK agar halaman dengan sampah simbol (楼/绿 dll) memicu retry.
+
+### file baru
+
+| File | keterangan |
+|---|---|
+| `src/ocr/tableRegionOcr.js` | Deteksi region tabel berbasis piksel (grid line detection) + `ocrTableRegions()` (crop → upscale 2× → deskew → OCR) + `repairTableBlocks()` (ganti blok garbage dalam region) |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/deskewRouter.js` | deskew hanya via sidecar/OSD/projection ±5° | + `detectSkewHoughLite()` + `tryHoughLite()` — Hough transform pure-JS (downsample ≤1MP → Otsu → gradient edge → accumulator θ=90°±limit, step 0.5° → median weighted + confidence). Cascade: **hough-lite → sidecar → OSD → projection**. Rotasi koreksi `rotateCanvas(-angle)` (konvensi OpenCV) |
+| `src/ocr/router.js` | retry pakai **gambar preprocess yang sama** (cache statis per halaman), hanya ganti engine; `selectRetryStrategy` dead code | `_stepsForRetry()`: retry 0 = steps default, retry 1 = +upscale, retry 2 = +upscale+denoise; `_engineForRetry()`: engine alternatif (`auto`) di retry akhir; cache per `{halaman, retry}`; setelah loop → **region repair**: `repairTableBlocks()` pada canvas original → blok baru menggantikan blok dalam region tabel, score dihitung ulang |
+| `src/ocr/preprocessor.js` | steps: grayscale, threshold, denoise, deskew, deskew-adaptive, perspective, rotate | + step `upscale` (faktor dari `options.upscaleFactor`, dipakai retry); fix Otsu `>` → `>=` (threshold 0 untuk gambar 2-level murni) |
+| `src/ocr/qualityMetrics.js` | garbage hanya digit pendek (`!hasAlpha && digitRatio > 0.5`) — sampah CJK lolos | + `isGarbageWord()`: CJK murni pendek, campuran Latin+CJK ≤ 4 char, digit+CJK ≤ 6 char → garbage; `computePageScore` + `cjkWords`; `isGarbageWord` di-export |
+| `src/pdf/imageConverter.js` | `tablePages` → scale ×1.5 (dari base) | + opsi `tableScale` eksplisit (default `scale*1.5`); dukungan kombinasi `{scale, tablePages, tableScale}` non-adaptive |
+| `src/config/index.js` | `table.detect/preserveGrid/splitCells` | + `table.renderScale` (`TABLE_RENDER_SCALE`, default 3.0) |
+| `server.js` | SCAN: `convertPdfToImages({adaptive:true})` — `tablePages` kosong | + `renderPdfImagesWithTableBoost()`: pass 1 render scale 1.0 → `detectTableRegions()` per halaman → `tablePages` → re-render base `PDF_RENDER_SCALE` (2.0), halaman tabel di `TABLE_RENDER_SCALE` (3.0). Dipakai di pipeline & legacy path |
+| `.env` | `OCR_PREPROCESS_STEPS=grayscale,threshold,rotate`, `PDF_RENDER_SCALE=1.5`, `DESKEW_PERSPECTIVE=false`, `PERSPECTIVE_ENABLED=false` | `grayscale,threshold,rotate,deskew-adaptive,perspective`; `PDF_RENDER_SCALE=2.0`; `DESKEW_PERSPECTIVE=true`; `PERSPECTIVE_ENABLED=true`; + `TABLE_RENDER_SCALE=3.0` |
+| `src/ocr/engines/paddleEngine.js`, `tesseractEngine.js` | empty catch `{}` (error lint) | + komentar di catch block |
+| `src/ocr/engine.js` | unused `config`, `logger` | dihapus |
+| `src/ocr/tableDetector.js` | trailing comma hilang (warning lint) | diperbaiki |
+| `test.js` | 113 tes | + 13 tes section `=== 12. Deskew Hough-lite & Region OCR ===` = **126 passed, 0 failed** |
+
+### detail
+
+**Hough-lite pure-JS** (`detectSkewHoughLite`):
+- Downsample ≤ 1MP → grayscale → Otsu → edge pixel (gradient magnitude ≥ 60) → accumulator Hough 2D `(theta, rho)` dengan theta = `90° ± maxAngle`, step 0.5° (baris teks ≈ horizontal → normal di ±90°)
+- Peak per theta (bukan total vote — total vote tersebar merata ke semua theta) → median weighted dari theta di atas 60% peak → `{angle, confidence}`
+- Koreksi: `rotateCanvas(canvas, -angle)` — konvensi OpenCV (rotasi canvas berlawanan dengan matrix OpenCV)
+- Test: garis sintetik +3°/-8° terdeteksi ±1.5°, blank/horizontal → null
+
+**Region OCR tabel** (`tableRegionOcr.js`):
+- `detectTableRegions(canvas)`: run-length horizontal/vertikal (densitas ≥ 60% lebar/tinggi) → garis grid → interval antar garis horizontal + garis vertikal → bbox region → merge region berdampingan (gap < 10px)
+- `ocrTableRegions()`: crop + padding 12px → upscale 2× → `deskewImage()` → grayscale+threshold → `recognizeBlocks()` → bbox dikembalikan ke koordinat halaman
+- `repairTableBlocks()`: dipanggil di `_recognizePageCascade` setelah semua retry — blok dalam region tabel diganti blok OCR region (hanya jika score membaik)
+
+**Retry adaptif** (`router.js`):
+- retry 0: steps default; retry 1: + `upscale` (1.5×); retry 2: + `upscale` (3.0×) + `denoise`
+- Engine: retry terakhir pakai `auto` (surya→tesseract→paddle) — **preprocessing/DPI didahulukan, engine baru diganti saat kualitas masih rendah** (italic/tipis)
+- Cache `_preprocessedCache[i][retry]` — tiap retry gambar berbeda (sebelumnya sama persis)
+
+**Render scale** (`server.js`):
+- Pass 1 render scale 1.0 (deteksi grid cepat) → halaman bertabel di-render ulang scale 3.0×, halaman lain 2.0× (naik dari 1.5)
+- Fallback aman: `TABLE_DETECT=false` → semua halaman 2.0×
+
+### catatan
+- Perspective correction butuh sidecar `sidecar/deskew.py` port 5002 (`DESKEW_SERVICE_URL=http://localhost:5002`) — tanpa sidecar → no-op aman
+- Trade-off: deskew hough-lite ±1 dtk/halaman; re-render halaman tabel 3.0× menambah memori (±80 MB RGBA per halaman A4)
+
+---
+
+## Changelog — 2026-07-31 (v19)
+
+### ringkasan
+Tahap 2 — Perbaikan struktur pohon dokumen di `documentTreeBuilder`: hierarki heading (BAB→BAGIAN→PARAGRAF→PASAL→AYAT) yang sebelumnya rata di root, pemisahan paragraf per halaman & per marker ayat/huruf, interleave tabel di posisi aslinya, deteksi judul dokumen, dan perbaikan render BAB.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/reconstruction/builder/documentTreeBuilder.js` | semua heading jadi child root (branch `node.type === 'heading'` tak pernah true), pasal tidak pernah di-pop dari stack, paragraf gabung lintas halaman, tabel di-push ke akhir, BAGIAN level `stack.length >= 2 ? 3 : 2`, `_groupIntoParagraphs` menghilangkan baris heading | heading di-push ke stack (`while (stack.length - 1 >= level) pop`), pasal di-pop sebelum pasal baru (sibling, bukan child), paragraf di-flush saat ganti halaman/baris kosong/marker `(n)` & `a.`, `_groupIntoParagraphs(lines, skipIdx)` simpan `_startIdx`, group punya `pos` + sort → tabel interleave di posisi asli, BAGIAN level 2 konstan, deteksi judul (`PERATURAN/KEPUTUSAN/...` + panjang/NOMOR/TAHUN/TENTANG → node `title`), `_createNode` strip marker `(1)`/`a.` dari baris pertama ayat/huruf/angka |
+| `src/reconstruction/output/markdownGenerator.js` | BAB render `## I BAB I ...` (dobel nomor) | BAB pakai title langsung jika sudah diawali `BAB`; + render `title` → bold |
+| `src/reconstruction/output/htmlGenerator.js` | — | + CSS `.title` (bold, center) |
+| `src/reconstruction/analyzer/documentAnalyzer.js` | dupe key `%PDF` di MAGIC_NUMS (error lint), MAGIC_NUMS/PAGE_SIZE_THRESHOLD unused | dihapus |
+| `test.js` | 106 tes | + 7 tes struktur (nested heading, split per halaman, interleave tabel, judul, title bold, split ayat/huruf, BAB heading) = **113 passed, 0 failed** |
+| `AGENTS.md` / `AGENTS_QUICK.md` | — | + catatan Tahap 2 |
+
+### detail
+
+**Hierarki heading** (sebelumnya rusak — `node.type === 'heading'` tidak pernah diproduksi oleh `_classifyParagraph`, sehingga semua heading menjadi child root; pasal berurutan menjadi child pasal sebelumnya):
+```
+root
+├── title (baru — deteksi judul dokumen)
+├── bab I
+│   └── bagian
+│       └── paragraf
+│           ├── pasal 1
+│           │   ├── ayat (1)
+│           │   ├── huruf a.
+│           │   └── ayat (2)
+│           └── pasal 2
+└── bab II (sibling bab I — `>= level` di pop condition)
+```
+
+**Interleave tabel**: `detectTableFromLines` mengembalikan `startIdx` di array baris asli; tiap group (paragraph/table ASCII/table grid) diberi `pos` lalu di-sort — tabel tidak lagi dipindah ke akhir dokumen.
+
+**Paragraf per halaman**: `_groupIntoParagraphs` men-flush saat `line.page` berubah, sehingga paragraf tidak menggabung baris dari halaman berbeda.
+
+**Marker ayat/huruf**: baris `(1) ...`, `a. ...`, `1. ...` memulai node baru (bukan menjadi bagian paragraph sebelumnya); `_createNode` menghapus marker dari `text` agar render tidak dobel (`(1) (1) ...`).
+
+### bug yang ditemukan saat verifikasi
+- `_groupIntoParagraphs` v18 menghilangkan SEMUA baris heading (lupa `current = [line]` sebelum flush) → `tree = title,ayat,ayat,ayat` — diperbaiki di v19.
+- Pasal berurutan menjadi child pasal sebelumnya (stack tidak di-pop) → Pasal 2 nested di dalam Pasal 1 — diperbaiki.
+- BAB II menjadi child BAB I (`>` bukan `>=` di pop condition) — diperbaiki.
+
+---
+
+## Changelog — 2026-07-31 (v18)
+
+### ringkasan
+Tahap 1 — Validasi kualitas OCR per halaman, fallback engine, dan review otomatis struktur dokumen hukum. Halaman kualitas rendah **ditandai LOW QUALITY (tetap dipakai)**, review **laporan saja** (tidak auto-fix). Berlaku di alur pipeline & legacy.
+
+### file baru
+
+| File | keterangan |
+|---|---|
+| `src/reconstruction/review/documentReviewer.js` | Review otomatis: skor 0–1 + daftar issue terurut severity. Cek urutan BAB/Pasal/Ayat (tidak turun, tidak duplikat, ayat mulai dari (1)), penempatan heading (Pasal/Bagian/Paragraf tanpa BAB, orphan ayat/huruf), tabel (kosong, posisi akhir), judul + Menimbang, urutan halaman monoton, blok LOW QUALITY |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/qualityMetrics.js` | hanya confidence score | + `computeQualityScore(blocks)` — komposit `0.5*conf + 0.35*(1-garbageRatio) + 0.15*min(wordCount/20,1)`; + `shouldAcceptPage()` (minWordCount 5, minConfidence 0.3, maxGarbageRatio 0.4, minQualityScore 0.3); `selectRetryStrategy()` sekarang juga set engine (`auto` di tiap retry), DPI naik 1.5→2.0→2.5 |
+| `src/ocr/router.js` | kaskade retry per halaman, tanpa fallback engine | ditulis ulang: `getEngineCandidates()` (auto → surya→tesseract→paddle; preferred+sisanya), cache engine, kaskade **engine × retry** per halaman, pilih hasil terbaik (skor komposit), `results.pageQuality[]` per halaman (`{page, accepted, lowQuality, score, ...}`), blok diberi `quality:'low'`, `resetEngine()`. API `engine.js` tidak berubah |
+| `src/reconstruction/pipeline.js` | tanpa review | + stage review (progres 0.7) setelah legalParser → `ctx.review`; gate `config.review.enabled`; `doc.review` |
+| `src/reconstruction/index.js` | — | + pass `config.review` ke Pipeline |
+| `src/reconstruction/models/documentModel.js` | `Document` tanpa review | + properti `review` + `toJSON().review` |
+| `server.js` | `result.reconstruction` tanpa review | + `review` (score, issueCount, top 10 issues) di response; legacy path: append catatan `[CATATAN: N halaman LOW QUALITY]` + log warning jika ada halaman kualitas rendah |
+| `.env` | 91 baris | + `OCR_ENGINE_FALLBACK` (true), `OCR_QUALITY_GATE` (true), `OCR_MIN_WORD_COUNT` (5), `OCR_MAX_GARBAGE_RATIO` (0.4), `REVIEW_ENABLED` (true), `REVIEW_MAX_ISSUES` (50) |
+| `src/config/index.js` | 7 section | + `ocr.engineFallback/qualityGate/minWordCount/maxGarbageRatio` + section `review` |
+| `test.js` | 92 tes (88 jalan) | + 18 tes section `=== 11. Review & Kualitas ===` = **106 passed, 0 failed** |
+| `AGENTS.md` / `AGENTS_QUICK.md` | — | + konfigurasi & fitur baru |
+
+### detail
+
+**Skor halaman** (`computeQualityScore`): gabungan confidence, garbage ratio, dan word count; `shouldAcceptPage()` membandingkan dengan ambang — jika lolos, halaman diterima tanpa retry; jika tidak, retry berikutnya.
+
+**Kaskade engine** (`_recognizePageCascade` di `router.js`): tiap retry mencoba semua engine kandidat (preferred dulu), skor komposit dihitung per hasil, hasil terbaik disimpan. Setelah `OCR_MAX_CONFIDENCE_RETRIES` habis, hasil terbaik dipakai dengan `accepted:false` → ditandai LOW QUALITY (teks tetap dipakai).
+
+**Review** (`documentReviewer.js`): severity error (0.25) / warning (0.10) / info (0.03); skor = `max(0, 1 - total bobot)`; issue diurutkan severity lalu dipangkas `REVIEW_MAX_ISSUES`. Tipe issue: `bab-order`, `bab-duplicate`, `pasal-order`, `pasal-duplicate`, `ayat-order`, `ayat-start`, `heading-parent`, `orphan-ayat`, `orphan-item`, `table-empty`, `table-position`, `title-missing`, `preamble-missing`, `page-order`, `low-quality`.
+
+**Catatan quirk test**: test.js mendefinisikan 92 tes tapi hanya 88 yang jalan (4 `testAsync` tidak di-await). Setelah +18 tes sync → 106 lulus. Jumlah terdefinisi sekarang 110.
+
+---
 
 ## Changelog — 2026-07-27
 

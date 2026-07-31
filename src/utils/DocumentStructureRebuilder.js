@@ -58,18 +58,30 @@ class DocumentStructureRebuilder {
 
   level(type) {
     switch (type) {
-      case 'LEGAL_AUTHORITY': return 1;
-      case 'LEGAL_PREAMBLE': return 2;
-      case 'BAB': return 3;
-      case 'BAGIAN': return 4;
-      case 'PARAGRAF': return 5;
-      case 'PASAL': return 6;
-      case 'AYAT_HEADER': return 7;
-      case 'AYAT': return 7;
-      case 'HURUF': return 8;
-      case 'NOMOR': return 8;
-      case 'BULLET': return 8;
-      default: return 9;
+      case 'LEGAL_AUTHORITY':
+        return 1;
+      case 'LEGAL_PREAMBLE':
+        return 2;
+      case 'BAB':
+        return 3;
+      case 'BAGIAN':
+        return 4;
+      case 'PARAGRAF':
+        return 5;
+      case 'PASAL':
+        return 6;
+      case 'AYAT_HEADER':
+        return 7;
+      case 'AYAT':
+        return 7;
+      case 'HURUF':
+        return 8;
+      case 'NOMOR':
+        return 8;
+      case 'BULLET':
+        return 8;
+      default:
+        return 9;
     }
   }
 

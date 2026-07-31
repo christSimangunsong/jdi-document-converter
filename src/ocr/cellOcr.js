@@ -58,15 +58,21 @@ function normalizeBbox(bbox, imgW, imgH) {
       w = Math.max(...xs) - x;
       h = Math.max(...ys) - y;
     } else {
-      x = 0; y = 0; w = imgW; h = imgH;
+      x = 0;
+      y = 0;
+      w = imgW;
+      h = imgH;
     }
   } else if (bbox && typeof bbox === 'object') {
     x = bbox.x || bbox.left || 0;
     y = bbox.y || bbox.top || 0;
-    w = bbox.w || bbox.width || bbox.right ? (bbox.right - x) : imgW;
-    h = bbox.h || bbox.height || bbox.bottom ? (bbox.bottom - y) : imgH;
+    w = bbox.w || bbox.width || bbox.right ? bbox.right - x : imgW;
+    h = bbox.h || bbox.height || bbox.bottom ? bbox.bottom - y : imgH;
   } else {
-    x = 0; y = 0; w = imgW; h = imgH;
+    x = 0;
+    y = 0;
+    w = imgW;
+    h = imgH;
   }
 
   return {
@@ -103,9 +109,9 @@ function fixTableCellSymbol(text) {
 function clusterBlocksToGrid(blocks, imgW, imgH) {
   if (!blocks || blocks.length === 0) return null;
 
-  const avgH = blocks
-    .filter(b => b.bbox)
-    .reduce((sum, b) => sum + (normalizeBbox(b.bbox, imgW || 1, imgH || 1).h || 15), 0) / Math.max(1, blocks.filter(b => b.bbox).length);
+  const avgH =
+    blocks.filter((b) => b.bbox).reduce((sum, b) => sum + (normalizeBbox(b.bbox, imgW || 1, imgH || 1).h || 15), 0) /
+    Math.max(1, blocks.filter((b) => b.bbox).length);
   const ROW_THRESHOLD = Math.max(8, avgH * 0.8);
 
   const rows = new Map();
@@ -147,7 +153,7 @@ async function reconstructTableFromBlocks(fullCanvas, blocks, engine) {
 
   logger.info(`  Rekonstruksi tabel: ${grid.length} baris terdeteksi`);
 
-  const maxCols = Math.max(...grid.map(row => row.length));
+  const maxCols = Math.max(...grid.map((row) => row.length));
   const tableLines = [];
 
   for (const row of grid) {
@@ -173,7 +179,7 @@ async function reconstructTableFromBlocks(fullCanvas, blocks, engine) {
 function formatAsciiTable(rows) {
   if (!rows || rows.length === 0) return '';
 
-  const colCount = Math.max(...rows.map(r => r.length));
+  const colCount = Math.max(...rows.map((r) => r.length));
   const colWidths = [];
 
   for (let c = 0; c < colCount; c++) {
@@ -186,20 +192,23 @@ function formatAsciiTable(rows) {
     colWidths.push(Math.min(Math.max(maxWidth + 2, 5), 60));
   }
 
-  const sep = '+' + colWidths.map(w => '-'.repeat(w)).join('+') + '+';
+  const sep = '+' + colWidths.map((w) => '-'.repeat(w)).join('+') + '+';
   const lines = [sep];
 
   for (const row of rows) {
-    const maxLines = Math.max(1, ...row.map(cell => {
-      const text = cell || '';
-      const w = colWidths[row.indexOf(cell)] - 2;
-      return w > 0 ? Math.ceil(text.length / w) : 1;
-    }));
+    const maxLines = Math.max(
+      1,
+      ...row.map((cell) => {
+        const text = cell || '';
+        const w = colWidths[row.indexOf(cell)] - 2;
+        return w > 0 ? Math.ceil(text.length / w) : 1;
+      }),
+    );
 
     for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
       let line = '|';
       for (let c = 0; c < colCount; c++) {
-        const text = c < row.length ? (row[c] || '') : '';
+        const text = c < row.length ? row[c] || '' : '';
         const w = colWidths[c] - 2;
         const start = lineIdx * Math.max(w, 1);
         const part = text.substring(start, start + Math.max(w, 1));
@@ -213,4 +222,11 @@ function formatAsciiTable(rows) {
   return lines.join('\n');
 }
 
-module.exports = { ocrTableCell, normalizeBbox, clusterBlocksToGrid, reconstructTableFromBlocks, formatAsciiTable, fixTableCellSymbol };
+module.exports = {
+  ocrTableCell,
+  normalizeBbox,
+  clusterBlocksToGrid,
+  reconstructTableFromBlocks,
+  formatAsciiTable,
+  fixTableCellSymbol,
+};

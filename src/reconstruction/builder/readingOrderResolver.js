@@ -4,15 +4,13 @@ const readingOrderResolver = {
   resolve(blocks, options = {}) {
     if (!blocks || blocks.length === 0) return [];
     const pages = options.pages || [];
-    const hasBBox = blocks.some(b => b.bbox);
+    const hasBBox = blocks.some((b) => b.bbox);
     if (!hasBBox) return this._resolveByOrder(blocks);
     return this._resolveByPosition(blocks, pages);
   },
 
   _resolveByOrder(blocks) {
-    return blocks
-      .map((b, i) => ({ ...b, order: b.order != null ? b.order : i }))
-      .sort((a, b) => a.order - b.order);
+    return blocks.map((b, i) => ({ ...b, order: b.order != null ? b.order : i })).sort((a, b) => a.order - b.order);
   },
 
   _resolveByPosition(blocks, pages) {
@@ -34,7 +32,7 @@ const readingOrderResolver = {
 
   _sortPageBlocks(blocks) {
     const sorted = blocks
-      .map(b => ({
+      .map((b) => ({
         ...b,
         centerY: b.bbox ? b.bbox.y + b.bbox.h / 2 : 0,
       }))
