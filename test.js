@@ -327,6 +327,60 @@ test('table with multiline cell', () => {
   const result = formatTableHtmlToText(html);
   assert.ok(result.includes('Hello World'));
 });
+test('strips literal None placeholder cells', () => {
+  const html =
+    '<table><tr><th>PROGRAM</th><th>SATUAN</th></tr>' +
+    '<tr><td>None</td><td>Daerah</td></tr>' +
+    '<tr><td>None c) DPRD kabupaten</td><td>None</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(!result.includes('None'), `masih ada None: ${result}`);
+  assert.ok(result.includes('PROGRAM'));
+  assert.ok(result.includes('c) DPRD kabupaten'));
+});
+test('drops numeric index header row (0|1|2)', () => {
+  const html =
+    '<table><tr><th>0</th><th>1</th><th>2</th></tr>' +
+    '<tr><td>NO</td><td>KEBIJAKAN</td><td>PELAKSANA</td></tr>' +
+    '<tr><td>1</td><td>Program</td><td>Dinas</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(!result.includes('| 0 |'), `baris indeks masih ada: ${result}`);
+  assert.ok(result.includes('KEBIJAKAN'));
+  assert.ok(result.includes('Program'));
+});
+test('strips border "=" artifact lines in cells', () => {
+  const html = '<table><tr><td>=\nNO|KEBIJAKAN</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  const contentLines = result
+    .split('\n')
+    .filter((l) => l.includes('|'))
+    .map((l) => l.trim());
+  assert.ok(contentLines.length >= 1);
+  assert.ok(contentLines.some((l) => l.includes('NO|KEBIJAKAN')), `konten hilang: ${result}`);
+  assert.ok(
+    contentLines.every((l) => l !== '|' && !/^\|[-=]+\|$/.test(l.replace(/ /g, ''))),
+    `artefak border tersisa: ${result}`,
+  );
+});
+test('drops all-empty rows after cleanup', () => {
+  const html =
+    '<table><tr><td>Ali</td><td>25</td></tr>' +
+    '<tr><td></td><td></td></tr>' +
+    '<tr><td>Budi</td><td>30</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(result.includes('Ali'));
+  assert.ok(result.includes('Budi'));
+  assert.strictEqual((result.match(/^\|/gm) || []).length, 2, 'hanya 2 baris data');
+});
+test('keeps real data rows that contain only digits', () => {
+  const html =
+    '<table><tr><th>NO</th><th>TAHUN</th></tr>' +
+    '<tr><td>1</td><td>2020</td></tr>' +
+    '<tr><td>2</td><td>2021</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(result.includes('2020'));
+  assert.ok(result.includes('2021'));
+  assert.ok(result.includes('TAHUN'));
+});
 
 // ========================================================================
 console.log('\n=== 9. tableGarbageFilter ===');
@@ -1175,6 +1229,207 @@ test('detectSkewHoughLite detects tilted grid angle', () => {
   const res = detectSkewHoughLite(gray, 400, 300, 15);
   assert.ok(res, 'angle grid miring harus terdeteksi');
   assert.ok(Math.abs(res.angle - 4) < 1.5, `angle harus ~4°, dapat ${res.angle}°`);
+});
+
+// ========================================================================
+console.log('\n=== 14. Text Layer Validator ===');
+const { commonWordRatio, textLayerIsTrustworthy } = require('./src/pdf/textLayerValidator');
+
+const LEGAL_TEXT = [
+  'SALINAN BUPATI DAIRI PROVINSI SUMATERA UTARA PERATURAN BUPATI DAIRI NOMOR 2 TAHUN 2020',
+  'TENTANG KEBIJAKAN DAN STRATEGI PENGELOLAAN SAMPAH RUMAH TANGGA',
+  'Menimbang : Mengingat : Pasal Ayat bahwa dengan peraturan daerah ini',
+  'dimaksud untuk pemerintah yang dan dalam pada dengan tahun tentang',
+].join(' ');
+
+const GARBLED_TEXT = Array.from(
+  { length: 40 },
+  (_, i) => ['xqzl', 'kjmw', 'rtvy', 'hnpl', 'opzs', 'wqru', 'mgfe', 'lkds', 'jhba'][i % 9],
+).join(' ');
+
+test('commonWordRatio: teks hukum Indonesia > 0.05', () => {
+  const ratio = commonWordRatio(LEGAL_TEXT);
+  assert.ok(ratio !== null, 'rasio tidak null');
+  assert.ok(ratio >= 0.05, `rasio harus >= 0.05, dapat ${ratio}`);
+});
+
+test('commonWordRatio: teks garbled acak = 0', () => {
+  const ratio = commonWordRatio(GARBLED_TEXT);
+  assert.ok(ratio !== null, 'rasio tidak null');
+  assert.ok(ratio < 0.05, `rasio harus < 0.05, dapat ${ratio}`);
+});
+
+test('commonWordRatio: < 15 kata return null', () => {
+  assert.strictEqual(commonWordRatio('yang dan untuk'), null);
+  assert.strictEqual(commonWordRatio(''), null);
+  assert.strictEqual(commonWordRatio('12345678'), null);
+});
+
+test('textLayerIsTrustworthy: teks hukum normal diterima', () => {
+  assert.strictEqual(textLayerIsTrustworthy(LEGAL_TEXT), true);
+});
+
+test('textLayerIsTrustworthy: teks garbled ditolak', () => {
+  assert.strictEqual(textLayerIsTrustworthy(GARBLED_TEXT), false);
+});
+
+test('textLayerIsTrustworthy: < 40 chars ditolak (dipaksa OCR)', () => {
+  assert.strictEqual(textLayerIsTrustworthy('Pasal 1 yang dan'), false);
+});
+
+test('textLayerIsTrustworthy: null ratio (teks pendek) diterima', () => {
+  const short = 'Bupati Dairi Provinsi Sumatera Utara Kebijakan Strategi Pengelolaan';
+  assert.ok(short.trim().length >= 40, 'panjang teks uji harus >= 40 chars');
+  assert.strictEqual(commonWordRatio(short), null);
+  assert.strictEqual(textLayerIsTrustworthy(short), true);
+});
+
+test('textLayerIsTrustworthy: teks non-Latin (CJK) diterima, bukan false positive', () => {
+  const cjk = Array.from({ length: 60 }, () => '楼').join(' ');
+  assert.strictEqual(textLayerIsTrustworthy(cjk), true);
+});
+
+// ========================================================================
+console.log('\n=== 15. Table-Aware Gate & Config ===');
+const { detectWiredGridRegions, blockInRegion } = require('./src/ocr/tableRegionOcr');
+const tableAwareService = require('./src/services/tableAwareService');
+
+test('config.tableAware structure valid', () => {
+  assert.strictEqual(typeof config.tableAware.enabled, 'boolean');
+  assert.strictEqual(typeof config.tableAware.serviceUrl, 'string');
+  assert.strictEqual(typeof config.tableAware.timeout, 'number');
+});
+
+test('detectWiredGridRegions finds wired grid', () => {
+  const canvas = mockCanvas(makeGridGray(300, 200), 300, 200);
+  const regions = detectWiredGridRegions(canvas);
+  assert.ok(regions.length >= 1, 'grid wired 3 kolom harus lolos gate');
+});
+
+test('detectWiredGridRegions empty on blank page', () => {
+  const canvas = mockCanvas(new Uint8Array(300 * 200).fill(255), 300, 200);
+  assert.deepStrictEqual(detectWiredGridRegions(canvas), []);
+});
+
+test('detectWiredGridRegions rejects page border box (hanya kotak halaman)', () => {
+  const gray = new Uint8Array(300 * 200).fill(255);
+  for (let y = 0; y < 200; y++) {
+    gray[y * 300 + 2] = 0;
+    gray[y * 300 + 297] = 0;
+  }
+  for (let x = 0; x < 300; x++) {
+    gray[2 * 300 + x] = 0;
+    gray[197 * 300 + x] = 0;
+  }
+  const canvas = mockCanvas(gray, 300, 200);
+  assert.deepStrictEqual(detectWiredGridRegions(canvas), [], 'border kotak halaman di tepi 5% harus ditolak');
+});
+
+test('detectWiredGridRegions rejects horizontal-only lines (tanpa fallback)', () => {
+  const gray = new Uint8Array(300 * 200).fill(255);
+  for (const yLine of [50, 100, 150]) {
+    for (let x = 0; x < 300; x++) gray[yLine * 300 + x] = 0;
+  }
+  const canvas = mockCanvas(gray, 300, 200);
+  assert.deepStrictEqual(detectWiredGridRegions(canvas), [], '3 garis horizontal tanpa vertikal = bukan tabel wired');
+  assert.ok(detectTableRegions(canvas).length >= 1, 'legacy detectTableRegions tetap punya fallback');
+});
+
+test('detectWiredGridRegions empty on paragraph text lines', () => {
+  const gray = new Uint8Array(400 * 300).fill(255);
+  for (let i = 0; i < 8; i++) {
+    const y = 60 + i * 32;
+    for (let x = 40; x < 360; x++) gray[y * 400 + x] = 0;
+  }
+  const canvas = mockCanvas(gray, 400, 300);
+  assert.deepStrictEqual(detectWiredGridRegions(canvas), [], 'baris teks paragraf tanpa vertikal = 0 region');
+});
+
+test('blockInRegion: center dalam region true, di luar false', () => {
+  const region = { x: 100, y: 50, w: 200, h: 100 };
+  const inside = { bbox: { x: 150, y: 80, w: 10, h: 10 } };
+  const outside = { bbox: { x: 350, y: 20, w: 10, h: 10 } };
+  assert.strictEqual(blockInRegion(inside, region), true);
+  assert.strictEqual(blockInRegion(outside, region), false);
+});
+
+test('tableAwareService.analyzeTables returns null when disabled', async () => {
+  const original = { ...config.tableAware };
+  config.tableAware.enabled = false;
+  try {
+    const res = await tableAwareService.analyzeTables([{ image: 'abc', engine: 'img2table' }]);
+    assert.strictEqual(res, null);
+  } finally {
+    Object.assign(config.tableAware, original);
+  }
+});
+
+test('tableAwareService.analyzeTables returns null when serviceUrl kosong', async () => {
+  const original = { ...config.tableAware };
+  config.tableAware.enabled = true;
+  config.tableAware.serviceUrl = '';
+  try {
+    const res = await tableAwareService.analyzeTables([{ image: 'abc', engine: 'img2table' }]);
+    assert.strictEqual(res, null);
+  } finally {
+    Object.assign(config.tableAware, original);
+  }
+});
+
+// Gate "kualitas > estetika": blok table-aware hanya menggantikan blok OCR
+// bila tidak lebih buruk (mirror/CJK, None, terlalu pendek, skor rendah).
+const { ocrRouter } = require('./src/ocr/router');
+
+test('tableAwareWins: clean table replaces garbage OCR blocks', () => {
+  const ta = {
+    text: 'NO | KEBIJAKAN\n1. Program pengelolaan sampah\n2. Pelaksanaan pelatihan\n3. Pembinaan daerah',
+  };
+  const ocr = [
+    { text: 'qedurrs uesureinsued epep euesn', confidence: 0.5 },
+    { text: 'NOLERA TA RORANS AN D p 2 国', confidence: 0.5 },
+  ];
+  const decision = ocrRouter.tableAwareWins(ta, ocr);
+  assert.strictEqual(decision.replace, true, decision.reason || '');
+});
+
+test('tableAwareWins: garbage table (CJK mirror) rejected against clean OCR', () => {
+  const ta = {
+    text: 'qedurrs uesureinsued epep euesn n eed esnpond 国 国 丽 图 T W E',
+  };
+  const ocr = [
+    { text: 'Pasal 1 (1) Pengelolaan sampah rumah tangga dan sampah sejenis', confidence: 0.95 },
+    { text: 'BAB II Kebijakan dan strategi kabupaten', confidence: 0.95 },
+  ];
+  const decision = ocrRouter.tableAwareWins(ta, ocr);
+  assert.strictEqual(decision.replace, false, 'blok mirror harus ditolak');
+});
+
+test('tableAwareWins: None-laden table rejected', () => {
+  const ta = {
+    text: 'PROGRAM | SATUAN\nNone | Daerah\nNone None | None',
+  };
+  const ocr = [{ text: 'Program pengelolaan sampah daerah kabupaten', confidence: 0.9 }];
+  const decision = ocrRouter.tableAwareWins(ta, ocr);
+  assert.strictEqual(decision.replace, false, 'placeholder None berlebih harus ditolak');
+});
+
+test('tableAwareWins: too short table rejected', () => {
+  const ta = { text: '1' };
+  const ocr = [{ text: 'Pasal 2 Permohonan izin pengelolaan sampah', confidence: 0.9 }];
+  const decision = ocrRouter.tableAwareWins(ta, ocr);
+  assert.strictEqual(decision.replace, false, 'tabel 1 kata harus ditolak');
+});
+
+test('tableAwareWins: both good -> best score wins', () => {
+  const ta = {
+    text: 'PROGRAM | SATUAN\n1. Pengelolaan sampah | Daerah\n2. Pelatihan | Kabupaten',
+  };
+  const ocr = [
+    { text: 'Tabel program dan satuan pengelolaan sampah rumah tangga', confidence: 0.9 },
+    { text: 'Pelaksanaan pelatihan penanganan sampah sejenis', confidence: 0.9 },
+  ];
+  const decision = ocrRouter.tableAwareWins(ta, ocr);
+  assert.strictEqual(decision.replace, true, decision.reason || '');
 });
 
 // ========================================================================

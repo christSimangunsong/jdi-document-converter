@@ -3,7 +3,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const axios = require('axios');
 
 const config = require('./src/config');
 const logger = require('./src/services/logger');
@@ -24,6 +26,95 @@ const { generateXlsxReport } = require('./src/services/reportExporter');
 
 const app = express();
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 200 * 1024 * 1024 } });
+
+// ---------------------------------------------------------------------------
+// Auto-start sidecar Python (deskew 5002 + table-ocr 5003) saat npm start.
+// Gagal/offline sidecar TIDAK menggagalkan server — pipeline punya fallback.
+// ---------------------------------------------------------------------------
+const _sidecarProcesses = [];
+
+async function _httpAlive(url, timeoutMs = 3000) {
+  try {
+    await axios.get(url, { timeout: timeoutMs });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function _waitForHealth(url, timeoutMs = 120000, intervalMs = 2000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timer = setInterval(async () => {
+      if (await _httpAlive(url, 2000)) {
+        clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, intervalMs);
+  });
+}
+
+async function startSidecar(name, script, port) {
+  const url = `http://127.0.0.1:${port}/health`;
+  if (await _httpAlive(url)) {
+    logger.info(`  Sidecar ${name} (port ${port}) sudah berjalan, tidak di-spawn ulang`);
+    return;
+  }
+  logger.info(`  Menjalankan sidecar ${name} (port ${port}): ${config.sidecar.pythonBin} ${script}`);
+  const child = spawn(config.sidecar.pythonBin, [script], {
+    cwd: __dirname,
+    windowsHide: true,
+    stdio: 'ignore',
+  });
+  _sidecarProcesses.push(child);
+  child.on('error', (err) => logger.warn(`  Sidecar ${name} gagal dijalankan: ${err.message}`));
+  child.on('exit', (code) => logger.warn(`  Sidecar ${name} berhenti (exit ${code})`));
+  const ok = await _waitForHealth(url);
+  logger.info(
+    ok
+      ? `  Sidecar ${name} siap di http://127.0.0.1:${port}`
+      : `  Sidecar ${name} tidak siap dalam 120 detik — fallback tetap aktif`,
+  );
+}
+
+async function startSidecars() {
+  if (!config.sidecar || !config.sidecar.autostart) return;
+  logger.info('Auto-start sidecar (deskew 5002, table-ocr 5003)...');
+  const tasks = [];
+  if (config.deskew && config.deskew.serviceUrl) {
+    tasks.push(startSidecar('deskew', path.join('sidecar', 'run_deskew.py'), 5002));
+  }
+  if (config.tableAware && config.tableAware.enabled && config.tableAware.serviceUrl) {
+    tasks.push(startSidecar('table-ocr', path.join('sidecar', 'table_ocr', 'run_server.py'), 5003));
+  }
+  await Promise.all(tasks);
+}
+
+function stopSidecars() {
+  for (const child of _sidecarProcesses) {
+    try {
+      child.kill();
+    } catch {
+      /* abaikan */
+    }
+  }
+  _sidecarProcesses.length = 0;
+}
+
+process.on('exit', stopSidecars);
+process.on('SIGINT', () => {
+  stopSidecars();
+  process.exit(0);
+});
+process.on('SIGTERM', () => {
+  stopSidecars();
+  process.exit(0);
+});
 
 app.use(express.static('public'));
 app.use(express.json({ limit: '200mb' }));
@@ -128,10 +219,10 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
         });
         const reviewData = doc.review
           ? {
-              score: doc.review.score,
-              issueCount: doc.review.issueCount,
-              issues: doc.review.issues.slice(0, 10),
-            }
+            score: doc.review.score,
+            issueCount: doc.review.issueCount,
+            issues: doc.review.issues.slice(0, 10),
+          }
           : null;
         result.text = doc.markdown;
         result.reconstruction = {
@@ -678,6 +769,9 @@ const PORT = process.env.PORT || 3000;
 async function start() {
   try {
     await activityLogger.initDatabase();
+    // Sidecar di-start async (tidak memblokir server); fallback tetap aktif
+    // jika gagal/offline.
+    startSidecars().catch((err) => logger.warn(`Auto-start sidecar gagal: ${err.message}`));
     app.listen(PORT, () => {
       console.log(`PDF Converter siap di http://localhost:${PORT}`);
     });

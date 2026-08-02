@@ -70,6 +70,15 @@ const config = {
     splitCells: process.env.TABLE_SPLIT_CELLS !== 'false' && process.env.TABLE_SPLIT_CELLS !== '0',
     renderScale: parseFloat(process.env.TABLE_RENDER_SCALE) || 3.0,
   },
+  tableAware: {
+    enabled: process.env.TABLE_AWARE_ENABLED === 'true' || process.env.TABLE_AWARE_ENABLED === '1',
+    serviceUrl: process.env.TABLE_AWARE_SERVICE_URL || '',
+    timeout: parseInt(process.env.TABLE_AWARE_TIMEOUT, 10) || 1800000,
+  },
+  sidecar: {
+    autostart: process.env.SIDECAR_AUTOSTART !== 'false' && process.env.SIDECAR_AUTOSTART !== '0',
+    pythonBin: process.env.PYTHON_BIN || 'python',
+  },
   review: {
     enabled: process.env.REVIEW_ENABLED !== 'false' && process.env.REVIEW_ENABLED !== '0',
     maxIssues: parseInt(process.env.REVIEW_MAX_ISSUES, 10) || 50,

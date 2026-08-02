@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+pillow
+numpy
+pandas
+opencv-contrib-python==4.10.0.84
+img2table==2.0.0
+pytesseract
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+paddlex[ocr]==3.7.2

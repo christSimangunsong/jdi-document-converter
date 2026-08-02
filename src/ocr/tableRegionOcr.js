@@ -7,6 +7,8 @@ const REGION_PADDING = 12;
 const REGION_UPSCALE = 2;
 const LINE_DENSITY_THRESHOLD = 0.6;
 const MIN_REGION_SIZE = 40;
+const GRID_VERT_MARGIN = 0.05;
+const GRID_MIN_INNER_VERT = 3;
 
 function _toGrayData(canvas) {
   const ctx = canvas.getContext('2d');
@@ -174,6 +176,70 @@ function detectTableRegions(canvas) {
   }
 }
 
+/**
+ * Gate ketat untuk grid WIRED (border penuh): hanya halaman/region dengan
+ * minimal `GRID_MIN_INNER_VERT` garis vertikal di dalam band antar dua garis
+ * horizontal berturutan (vertikal diukur terhadap TINGGI BAND, margin 5% tepi)
+ * yang dianggap tabel. TANPA fallback horizontal-only (sumber false positive
+ * pada paragraf padat) dan menolak border kotak halaman (tepi 5%).
+ * Dipakai sebagai triase murah (~140 ms/halaman) penentu engine sidecar
+ * table-aware: paddlex untuk grid wired (colspan), img2table untuk lainnya.
+ */
+function detectWiredGridRegions(canvas) {
+  if (!canvas) return [];
+  try {
+    const { gray, w, h } = _toGrayData(canvas);
+    if (w * h < 10000) return [];
+    const thr = _otsu(gray, w, h);
+    const horiz = _detectHorizLines(gray, w, h, thr);
+    if (horiz.length < 2) return [];
+
+    const margin = Math.floor(w * GRID_VERT_MARGIN);
+    const regions = [];
+    for (let i = 0; i < horiz.length - 1; i++) {
+      const y0 = horiz[i];
+      const y1 = horiz[i + 1];
+      if (y1 - y0 < MIN_REGION_SIZE) continue;
+
+      const bandH = y1 - y0;
+      const minDark = bandH * LINE_DENSITY_THRESHOLD;
+      const verts = [];
+      let x = margin;
+      while (x < w - margin) {
+        let dark = 0;
+        for (let y = y0; y <= y1; y++) {
+          if (gray[y * w + x] < thr) dark++;
+        }
+        if (dark > minDark) {
+          let runEnd = x;
+          while (runEnd + 1 < w - margin) {
+            let nextDark = 0;
+            for (let y = y0; y <= y1; y++) {
+              if (gray[y * w + runEnd + 1] < thr) nextDark++;
+            }
+            if (nextDark <= minDark) break;
+            runEnd++;
+          }
+          verts.push(Math.floor((x + runEnd) / 2));
+          x = runEnd + 1;
+        } else {
+          x++;
+        }
+      }
+
+      if (verts.length < GRID_MIN_INNER_VERT) continue;
+      const x0 = verts[0];
+      const x1 = verts[verts.length - 1];
+      if (x1 - x0 < MIN_REGION_SIZE) continue;
+      regions.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    }
+    return _mergeRegions(regions);
+  } catch (err) {
+    logger.warn(`  Deteksi grid wired gagal: ${err.message}`);
+    return [];
+  }
+}
+
 function _clampRegion(region, imgW, imgH) {
   const pad = REGION_PADDING;
   const x = Math.max(0, Math.floor(region.x) - pad);
@@ -283,4 +349,10 @@ async function repairTableBlocks(pageCanvas, blocks, engine) {
   return { blocks: merged, replaced: newBlocks.length, regions };
 }
 
-module.exports = { detectTableRegions, ocrTableRegions, repairTableBlocks };
+module.exports = {
+  detectTableRegions,
+  detectWiredGridRegions,
+  ocrTableRegions,
+  repairTableBlocks,
+  blockInRegion: _blockInRegion,
+};

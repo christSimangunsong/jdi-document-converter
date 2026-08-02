@@ -31,6 +31,9 @@ services:
       - DESKEW_MIN_CONFIDENCE=0.3
       - DESKEW_PERSPECTIVE=false
       - DESKEW_MAX_ANGLE=30
+      - TABLE_AWARE_ENABLED=${TABLE_AWARE_ENABLED:-true}
+      - TABLE_AWARE_SERVICE_URL=http://table-ocr:5003
+      - TABLE_AWARE_TIMEOUT=3600000
     depends_on:
       db:
         condition: service_healthy
@@ -69,6 +72,19 @@ services:
       - DESKEW_PORT=5002
     restart: unless-stopped
 
+  table-ocr:
+    build: ./sidecar/table_ocr
+    ports:
+      - "5003:5003"
+    environment:
+      - OCR_LANG=${OCR_LANG:-id}
+      - TABLE_OCR_LANG=${TABLE_OCR_LANG:-ind+eng}
+      - TABLE_OCR_PORT=5003
+      - USE_GPU=${USE_GPU:-0}
+    volumes:
+      - table_ocr_cache:/root/.paddlex
+    restart: unless-stopped
+
   db:
     image: mysql:8
     environment:
@@ -94,3 +110,4 @@ volumes:
   sidecar_cache:
   surya_cache:
   deskew_cache:
+  table_ocr_cache:

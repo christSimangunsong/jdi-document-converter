@@ -5,6 +5,7 @@
   "main": "app.js",
   "scripts": {
     "start": "node server.js",
+    "sidecars": "node scripts/sidecars.js",
     "cli": "node app.js",
     "test": "node --experimental-vm-modules test.js",
     "lint": "eslint .",

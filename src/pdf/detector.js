@@ -1,5 +1,6 @@
 const pdfParse = require('pdf-parse');
 const logger = require('../services/logger');
+const { commonWordRatio, textLayerIsTrustworthy } = require('./textLayerValidator');
 
 const MIN_TEXT_LENGTH = 200;
 const MIN_CHARS_PER_PAGE = 15;
@@ -15,10 +16,17 @@ async function detectPdfType(buffer) {
     if (textLength >= MIN_TEXT_LENGTH) {
       const charsPerPage = textLength / pageCount;
       if (charsPerPage >= MIN_CHARS_PER_PAGE) {
-        logger.info(`  PDF terdeteksi sebagai TEXT (${textLength} chars, ${charsPerPage.toFixed(1)}/page)`);
-        return { type: 'TEXT', pageCount, text };
+        if (textLayerIsTrustworthy(text)) {
+          logger.info(`  PDF terdeteksi sebagai TEXT (${textLength} chars, ${charsPerPage.toFixed(1)}/page)`);
+          return { type: 'TEXT', pageCount, text };
+        }
+        const ratio = commonWordRatio(text);
+        logger.warn(
+          `  Text-layer acak/garbled (rasio kata umum: ${ratio === null ? 'n/a' : ratio.toFixed(3)}) — force OCR dari gambar`,
+        );
+      } else {
+        logger.info(`  PDF TEXT dilewati: ${charsPerPage.toFixed(1)} chars/page terlalu rendah`);
       }
-      logger.info(`  PDF TEXT dilewati: ${charsPerPage.toFixed(1)} chars/page terlalu rendah`);
     }
 
     const imageScore = estimateImageContent(buffer);
@@ -28,8 +36,14 @@ async function detectPdfType(buffer) {
     }
 
     if (textLength >= MIN_TEXT_LENGTH) {
-      logger.info(`  PDF terdeteksi sebagai TEXT (${textLength} chars, imageScore: ${imageScore})`);
-      return { type: 'TEXT', pageCount, text };
+      if (textLayerIsTrustworthy(text)) {
+        logger.info(`  PDF terdeteksi sebagai TEXT (${textLength} chars, imageScore: ${imageScore})`);
+        return { type: 'TEXT', pageCount, text };
+      }
+      const ratio = commonWordRatio(text);
+      logger.warn(
+        `  Text-layer acak/garbled (rasio kata umum: ${ratio === null ? 'n/a' : ratio.toFixed(3)}) — diperlakukan sebagai SCAN`,
+      );
     }
 
     logger.info(`  PDF terdeteksi sebagai SCAN (text: ${textLength} chars, imageScore: ${imageScore})`);

@@ -3,8 +3,12 @@ output/
 logs/
 uploads/
 .env
+__pycache__/
+*.pyc
+out-modul/
 sidecar/__pycache__/
 sidecar/*.pyc
+sidecar/table_ocr/__pycache__/
 sidecar/.paddleocr/
 sidecar/surya/__pycache__/
 benchmark/results/

@@ -14,6 +14,11 @@ function isGarbageWord(word) {
   if (hasCjk && !digitRatio && w.length <= 4) return true;
   if (!hasAlpha && hasCjk && digitRatio > 0 && w.length <= 6) return true;
 
+  // Token Latin terisolasi 1 karakter (selain "a"/"i") — ciri khas teks yang
+  // terbaca MIRING (OCR memecah karakter menjadi simbol tunggal terpisah).
+  // "I" (roman) & "A" dikecualikan karena kata sah ("BAB I", "Lampiran IA").
+  if (hasAlpha && !hasCjk && /^[a-zA-Z]$/.test(w) && !/^[aiAI]$/.test(w)) return true;
+
   return false;
 }
 

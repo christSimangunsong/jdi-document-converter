@@ -66,8 +66,8 @@ function normalizeBbox(bbox, imgW, imgH) {
   } else if (bbox && typeof bbox === 'object') {
     x = bbox.x || bbox.left || 0;
     y = bbox.y || bbox.top || 0;
-    w = bbox.w || bbox.width || bbox.right ? bbox.right - x : imgW;
-    h = bbox.h || bbox.height || bbox.bottom ? bbox.bottom - y : imgH;
+    w = bbox.w || bbox.width || (bbox.right != null ? bbox.right - x : imgW);
+    h = bbox.h || bbox.height || (bbox.bottom != null ? bbox.bottom - y : imgH);
   } else {
     x = 0;
     y = 0;

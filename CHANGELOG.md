@@ -5,6 +5,180 @@
 
 ---
 
+## Changelog — 2026-08-03 (v26)
+
+### ringkasan
+**Perbaikan garbage mirror pada halaman tabel miring (hal 30/34)**: teks OCR hasil fallback rotasi terbaca terbalik ("NOLERA TA RORANS...", "国", "lpom era") dan lolos gate kualitas (score 0.89). Akar masalah ditemukan via instrumentasi bertahap: `_tryRotationVariants` meng-rotate gambar **dulu**, lalu `grayscale+threshold` — threshold pada gambar yang sudah di-rotate menghasilkan binary rusak → PaddleOCR membaca mirror garbage. Selain itu `_rescueGarbageBlocks` (tryBandRescue) selalu mencoba rescue untuk blok whole-page — bahkan yang sudah bersih — sehingga filter membuang baris konten dan skor anjlok. Perbaikan: preprocess sebelum rotate, rescue hanya untuk blok yang gagal gate, dan kriteria `firstReadable` memakai total huruf.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/router.js` | `_tryRotationVariants`: rotateCanvas dulu → preprocessImage | preprocessImage (grayscale+threshold) **dulu** → rotateCanvas/mirror pada binary |
+| `src/ocr/router.js` | `_rescueGarbageBlocks`: `tryBandRescue = !hasBbox && wordCount >= 3` — selalu jalan untuk blok whole-page; filter/repair dijalankan sebelum gate | filter/repair/probe HANYA jika `needsRescue` (cjk ≥ 1 / garbageRatio > 0.35 / common === 0) — blok bersih di-pass tanpa disentuh |
+| `src/ocr/router.js` | `_repairWholePageTopBand` firstReadable: `letters = match(/[a-zA-Z]+/g).length` (match-count kata) | `match(/[a-zA-Z]/g).length` (total huruf) + `len ≥ 15 && digits ≤ 4` — baris konten "2) Pelaksanaan training of trainer" terdeteksi, "lpom era"/"nCurAA1/Dcsa" tidak |
+| `src/utils/tableFormatter.js` (sesi sebelumnya — belum tercatat) | literal `\nNone` lolos `\bNone\b` (didahului huruf "n" — tanpa word boundary) | `cleanCellText` konversi `\\n`, `&#10;`, `&#13;` → newline nyata SEBELUM menghapus `None`/border |
+
+### detail
+
+**Urutan preprocess krusial**: test terkontrol membuktikan — rotate(-90) mentah → OCR = "TAHUN NOKEBIJAKAN..." (bersih); rotate(-90) → grayscale+threshold → OCR = mirror garbage; grayscale+threshold → rotate(-90) → OCR = bersih. Threshold Otsu global pada gambar yang sudah di-rotate memilih ambang yang merusak stroke huruf.
+
+**Temuan debugging** (untuk referensi): blok whole-page hasil fallback adalah 1 blok raksasa campuran garbage+konten (PaddleOCR `recognizeBlocks` tanpa bbox); band 420px atas gambar benar = header bersih; `_lineReadability` berbasis match-count membuat threshold 0.5 mustahil untuk baris pendek (semua baris < 0.07).
+
+**Verifikasi (sample 36 hlm, e2e penuh)**:
+- Hal 30: fallback `-90°` 0.43→**0.97**, paddle 1258 chars bersih, **semua 47 baris konten ada** — termasuk baris yang img2table drop ("Hidup Pekerjaan Umum dan", "Tata Ruang, Desa,", "Kelurahan, Pemberdayaan", "Kesejahteraan Keluarga", "e. Pembentukan jejaring nasional...", "sistem data dasar...", "informasi Sampah RumahTangga dan") dan yang tadinya dibuang filter ("Kota kecil Kegiatan 2 2 2...", tahun "202020212022202320242025"). Table-aware TIDAK menimpa (prosa hilang dicegah).
+- Hal 34: fallback `-90°` 0.00→**0.96**, table-aware 8579 (img2table) menggantikan, cjk=0, none=0 — tidak ada regresi.
+- E2E 36 hlm: **semua accepted** (score 0.77-0.99), TOTAL CJK 8 (P24:1, P26:7), none=0.
+- `npm test`: 156 passed 0 failed; lint 0 error.
+
+**Catatan sisa**: P24/P26 masih menyisakan CJK kecil (1 & 7 char, accepted) — baris garbage yang lolos rescue probe; bukan target sesi ini.
+
+---
+
+## Changelog — 2026-08-03 (v25)
+
+### ringkasan
+**Menutup sisa kasus simbol pada halaman tabel grid miring + otomatisasi sidecar.** Tes user (npm start, tanpa sidecar) menunjukkan 3 blok simbol tersisa di Lampiran I — semua halaman tabel ber-grid miring yang lolos koreksi. Akar masalah: (1) `detectTextOrientation` hanya melihat komponen terbesar — garis grid miring jadi komponen horizontal palsu (θ≈0) → halaman dianggap tegak; (2) halaman yang tetap miring (mis. hal 30 = "西 T W E 丽 图...") LOLOS gate kualitas karena token Latin 1-char terisolasi tidak dihitung garbage → fallback retry tidak pernah aktif; (3) sidecar harus dijalankan manual. Perbaikan: agregat area komponen vertikal vs horizontal, OCR multi-arah dengan skor keterbacaan (kata+digit−CJK), aturan garbage token Latin 1-char, fallback variasi rotasi 180/±90 di router untuk halaman kualitas rendah, dan **auto-start sidecar saat `npm start`** (`SIDECAR_AUTOSTART` + `PYTHON_BIN`).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/orientationDetector.js` | `detectTextOrientation` pakai komponen terbesar; `pickRotationDirection` OCR ±90 + commonWordRatio | + **agregat area** komponen vertikal (|θ|≥80) vs horizontal (|θ|≤10), `rotated` (ratio≥0.55) / `ambiguous` (0.45-0.55); `pickRotationByOcr` — OCR 0/±90 (+180 opsional, downscale 700px), skor `_readabilityScore` = 10×commonWordRatio + huruf + digit − penalti CJK, rotate hanya jika margin ≥ 0.05; `rotateCanvas` di-export |
+| `src/ocr/qualityMetrics.js` | `isGarbageWord`: digit & CJK saja | + token Latin 1-char terisolasi (selain a/i — "BAB I" aman) = garbage → halaman miring dengan token pecah ("T W E M I R N") kini ditolak gate kualitas → memicu retry/fallback |
+| `src/ocr/router.js` | cascade selesai di retry terakhir | + `_tryRotationVariants` — jika halaman masih low-quality setelah retry: OCR 180/±90 (preprocess tanpa steps rectify), pilih skor terbaik; log "koreksi rotasi OCR fallback" |
+| `server.js` | start() hanya initDatabase + listen | + auto-start sidecar async (spawn Python deskew 5002 + table-ocr 5003, health check 120s, anti-dobel via port probe, kill saat exit/SIGINT/SIGTERM) — gagal sidecar TIDAK menggagalkan server |
+| `src/config/index.js` | — | + block `sidecar`: `autostart` (SIDECAR_AUTOSTART, default true), `pythonBin` (PYTHON_BIN, default `python`) |
+| `.env` | — | + `SIDECAR_AUTOSTART=true`, `PYTHON_BIN=C:\Users\ACER\.conda\envs\jdi-ocr\python.exe` |
+| `sidecar/run_deskew.py` | — (baru) | peluncur deskew port 5002, set PATH+TESSDATA (menyamai pola `run_server.py`) |
+| `scripts/sidecars.js` | — (baru) | `npm run sidecars` — spawn manual kedua sidecar (log inherit) |
+| `start-sidecars.bat` | — (baru) | double-click → 2 jendela sidecar (baca PYTHON_BIN dari .env) |
+| `scripts/e2e-check.js` | — (baru) | alat regresi: pipeline penuh + laporan CJK per halaman |
+
+### detail
+
+**Kenapa agregat area, bukan komponen terbesar**: halaman tabel grid miring — garis grid asli-vertikal jadi horizontal (θ≈0) dengan area besar; teks sel (vertikal, θ≈90) kalah area jika hanya komponen terbesar yang diambil → verdict "tegak". Dengan agregat area semua komponen (≥0.05% halaman), teks sel + garis asli-horizontal yang kini vertikal menang (ratio ≥ 0.55) → terdeteksi. Grid super-dominan → ratio ≈ 0.5 → `ambiguous` → **OCR 4-rotasi** (0/90/180/270) memutuskan — sekaligus menutup kasus 180°.
+
+**Skor keterbacaan** `_readabilityScore`: rasio kata umum Indonesia (kamus textLayerValidator) ×10 + proporsi huruf + digit (tie-breaker tabel angka-murni) − penalti CJK×1.5 (tanda teks miring terbaca simbol). Margin 0.05 menghindari false-positive rotate pada halaman tegak.
+
+**Verifikasi (sample 36 hlm, e2e penuh)**:
+- `correctOrientation` scale 2.0: **24/25 halaman miring terdeteksi** (hal 12-29, 31-36); hal 30 MISS kontur (grid super-dominan, ratio < 0.45).
+- Hal 30 diselamatkan **fallback router**: garbage baru → ditolak gate (score 0.43) → `_tryRotationVariants` → `-90°` (score 0.89, teks "2) Pelaksanaan training of trainer..." terbaca, cjk 14→1).
+- E2E 36 halaman: **semua accepted** (score 0.72-0.99), **TOTAL CJK 3 karakter** (sebelumnya 3 blok simbol penuh). tablePages: 16,18,24,26,29,32.
+- Auto-start: `node server.js` → server siap + "Sidecar table-ocr siap di 5003" (~4s); deskew siap dalam ≤120s (import cv2 lambat); port bersih setelah kill.
+- `npm test`: 146 passed 0 failed; lint 0 error (15 warnings baseline).
+
+**Catatan sisa**: hal 30 masih menyisakan ~15% noise blok (mirror/terpotong) di sebagian sel tabel — mayoritas teks terbaca; hal 34: 2 CJK. Skew halus non-90° tetap di luar cakupan (deskew-adaptive menangani ±15°).
+
+---
+
+## Changelog — 2026-08-02 (v24)
+
+### ringkasan
+**Penutupan gap pipeline web app (Node)**: konten lampiran yang discan miring 90/180/270° DI DALAM halaman portrait (ukuran halaman tetap portrait) tidak pernah dikoreksi di jalur OCR biasa — `correctOrientation` hanya menangani halaman landscape (h<w). Kini `correctOrientation` untuk halaman portrait: (1) coba **Tesseract OSD** (`tryTesseractOsd`, tesseract.js) → (2) jika worker OSD tidak tersedia (env ini: "LSTM requested, but not present" — tesseract.js 5.1.1 gagal buat worker `osd`), **fallback kontur + OCR arah**: connected components (runs + union-find, JS murni) → θ (momen inersia) komponen teks terbesar ≥ 80° = teks vertikal → arah CW/CCW ditentukan OCR 2 kandidat (rotate ±90, downscale 700px) dengan engine paddle (reuse cache router) + `commonWordRatio` dari `textLayerValidator`.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/orientationDetector.js` | `correctOrientation`: hanya `height < width` → rotate -90, portrait → skip | + OSD portrait (tryTesseractOsd + gate `config.osd.minConfidence`, normalisasi conf 0-1→0-100) → fallback kontur: `detectTextOrientation` (downscale ≤1600px, Otsu, connected components 8-connectivity via runs, θ momen inersia komponen terbesar, ekspor non-publik), `pickRotationDirection` (OCR 2 kandidat paddle downscale 700px, `commonWordRatio`), `_getOsdEngine` (reuse `ocrRouter.getActiveEngine()` paddle → hindari 2× model OCR; stale engine → reset saat error) |
+
+### detail
+
+**Kenapa kontur, bukan proyeksi/run** (semua divalidasi empiris di dokumen nyata 36 hlm):
+- Proyeksi densitas baris/kolom & hitungan run panjang: TIDAK diskriminatif (hal 2 tegak vs hal 12 miring sama-sama nH=6; miring malah punya run horizontal panjang karena karakter tipis rapat).
+- Komponen teks θ: bekerja di resolusi ≥ huruf ~18px (render scale ≥ 1.5-2.0). **Gagal saat huruf < ~15px** (render scale 1.0 / downscale 1000px): teks melebur jadi blob horizontal palsu (komponen terbesar θ≈0 untuk halaman miring).
+- θ komponen terbesar (scale 2.0): hal 2 → -0.2 (tegak), hal 12 → 88.2, hal 13 → 88.8, hal 24 → -86.8 (miring) — cocok dengan OSD Python.
+- Tanda θ TIDAK menentukan arah (hal 12 θ+88 butuh CW, hal 27 θ+85 butuh CCW) → arah via OCR 2 kandidat + rasio kata umum.
+- Keterbatasan: 180° tidak terdeteksi kontur (OSD menangani jika tersedia); server.js pass 1 render scale 1.0 (table boost) tidak ter-rectify (huruf terlalu kecil) — dampak terbatas karena pipeline OCR utama (scale 2.0-3.0) yang menghasilkan teks.
+
+### verifikasi
+- `correctOrientation` (scale 2.0): hal 2 tetap 1224×2016 (OCR ratio 0.40); hal 13/24/36 → 2016×1224 (OCR ratio 0.45/0.28/0.25 — teks normal, tanpa simbol).
+- Jalur reuse engine: `ocrRouter.getActiveEngine()` paddle → hal 13/24 ROTATED, hal 2 tetap; `resetEngine` bersih.
+- `npm test`: 146 passed 0 failed; lint 0 error (15 warnings baseline).
+
+---
+
+## Changelog — 2026-08-02 (v23)
+
+### ringkasan
+**Koreksi rotasi robust untuk dokumen scan miring** — lampiran tabel (landscape) yang discan miring 90° di halaman portrait membuat Tesseract membaca **simbol-simbol** (garbage) jika rotasi tidak dikoreksi. `table_aware_ocr.py` bergantung penuh pada Tesseract OSD (`image_to_osd`); di lingkungan tanpa `tesseract-osd` (atau OSD gagal), `detect_rotation_angle()` mengembalikan 0 → tidak ada koreksi → simbol (direproduksi). Solusi: **fallback OCR 4-orientasi** (`--psm 6` pada gambar downscale ≤1000px, pilih rotasi dengan `common_word_ratio` tertinggi) — teruji 100% akurat pada 7 halaman dokumen nyata (rotasi prediksi cocok dengan OSD). Backport sama diterapkan ke sidecar `table_ocr/main.py` + **transform bbox balik** ke koordinat gambar asli (Node meng-crop bbox dari gambar yang tidak di-rotate).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `table_aware_ocr.py` | `detect_rotation_angle()`: OSD saja, `except pytesseract.TesseractError: return 0` | + fallback `_detect_rotation_by_ocr()` — OCR 4-rotasi + `common_word_ratio`, return `(-best) % 360` (konvensi OSD, dipakai `apply_rotation`); `except Exception` + log peringatan; + `_ocr_page_text()` — PSM 3 default, retry `--psm 6` saat osd hilang (gambar sudah tegak dari koreksi) |
+| `sidecar/table_ocr/main.py` | `/analyze` langsung ke engine, tanpa rotasi | + `_ensure_rotation()` (OSD → fallback OCR 4-orientasi, konvensi sama) diterapkan sebelum engine; + `_map_bbox_back()` transform bbox 90/180/270 kembali ke koordinat gambar asli (Node crop dari gambar asli); bbox pydantic di-assign ulang |
+
+### detail
+
+**Diagnosis (dokumen nyata: Perbub No 2 Tahun 2020 - 36 hlm scan murni)**:
+- Hal 1-11 tegak; **hal 12-36 lampiran discan miring 90°** (OSD rotate=90 conf 17-22 utk hal 12-17, rotate=270 utk hal 18-36). Bukan landscape page (612×1008 pt portrait) → `orientationDetector` Node (h<w) tidak menangkap → pipeline web app juga kena kasus ini.
+- Reproduksi: `process_page` dengan OSD dimatikan → simbol total (`900 I �08661 ZZOTOLE!`); dengan OSD aktif → teks normal + tabel. Fallback OCR 4-orientasi menghasilkan prediksi rotasi yang **sama persis dengan OSD** (hal 12-14 → 90, hal 24-36 → 270).
+- Bug arah fallback (v1): return `best` (sudut probe CCW) tapi `apply_rotation` butuh konvensi OSD (`rotate(-angle)`) → arah terbalik → tetap simbol; fix: `(-best_angle) % 360`.
+- Pendekatan lain ditolak setelah validasi empiris: proyeksi densitas baris/kolom (gagal: hal 2 tegak terdeteksi miring, hal 12 miring terdeteksi tegak), minAreaRect (normalisasi sudut menyesatkan, hal 36 diduga tegak padahal rotate=270), flip LR (bukan mirror).
+
+**Transform bbox balik** (koordinat gambar ter-rotasi → gambar asli, di mana Node crop):
+- rotate(-90)/angle=90: `(x,y) → (y, H-1-x)`; angle=270: `(x,y) → (W-1-y, x)`; angle=180: `(x,y) → (W-1-x, H-1-y)`. 4 sudut bbox dipetakan → min/max.
+
+### verifikasi
+- `process_pdf` penuh 36 hlm: 36 OCR ulang, 22 tabel terdeteksi, rotasi hal 12-17=90 / 18-36=270; hal 12 output normal (`LAMPIRAN I PERATURAN BUPATI DAIRI` + tabel angka `41,483.79` dst, tanpa simbol).
+- Simulasi env tanpa OSD (monkeypatch `image_to_osd` → raise): fallback → hal 12-14 rotasi 90, 24-36 rotasi 270, semua teks normal.
+- Sidecar: uvicorn 5003 + POST /analyze hal 12 (img2table) → 1 tabel, bbox `[643,254,1078,2355]` dalam bounds asli 1700×2800 ✓ (strip vertikal = bentuk konten miring, transform konsisten); sidecar dimatikan setelah verifikasi.
+- `npm test`: 146 passed, 0 failed.
+
+---
+
+## Changelog — 2026-08-02 (v22)
+
+### ringkasan
+**Table-Aware OCR (hybrid img2table + PaddleX)** via sidecar `sidecar/table_ocr/` — hasil komparasi empiris (v21b/2b) menunjukkan img2table lemah pada grid wired + colspan (header baris terduplikasi) dan PaddleX tidak mendeteksi tabel borderless; solusi: **gate piksel murah** (`detectWiredGridRegions`, Otsu + run-length, ~140 ms/halaman, verifikasi 4/4 pada sintetis) menentukan engine per halaman: grid wired (≥3 garis vertikal dalam band, margin 5% tepi, tanpa fallback horizontal-only) → PaddleX `table_recognition` (colspan akurat), halaman lain → img2table. Blok hasil sidecar (`source: 'table-aware'`) menggantikan blok OCR dalam region tabel di pipeline reconstruction.
+
+### file baru
+
+| File | keterangan |
+|---|---|
+| `sidecar/table_ocr/main.py` | FastAPI port 5003: `POST /analyze` (pages [{image, engine}]) hybrid; img2table (TesseractOCR ind+eng, borderless+implicit rows) / PaddleX `table_recognition` lazy singleton (env: PADDLE_PDX_MODEL_SOURCE=modelscope, PIR ON, mkldnn OFF); `GET /health` (termasuk debug tesseract/PATH); per-halaman error tidak membatalkan batch |
+| `sidecar/table_ocr/requirements.txt` | paddlepaddle==3.3.1, paddleocr 3.7.0, paddlex[ocr] 3.7.2, img2table 2.0.0, opencv-contrib-python==4.10.0.84, fastapi, uvicorn, pytesseract, pandas |
+| `sidecar/table_ocr/Dockerfile` | python 3.10-slim + tesseract-ocr + tesseract-ocr-ind + libgl/libgomp, port 5003 |
+| `sidecar/table_ocr/run_server.py` | entry dev Windows: set PATH (Library\bin) + TESSDATA_PREFIX dari dalam Python (Task Scheduler/WMI tidak mewarisi PATH conda; `setdefault` tidak menimpa PATH yang ada) |
+| `src/services/tableAwareService.js` | client HTTP: `analyzeTables(pages)` batch, health check 3 s, timeout `TABLE_AWARE_TIMEOUT` (default 30 mnt), unreachable → return null (skip, pipeline normal) |
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/tableRegionOcr.js` | `detectTableRegions()` (fallback horiz-only = false positive paragraf padat) | + `detectWiredGridRegions()` gate ketat run-length VERTIKAL per band (run kontigu → 1 garis, prototipe c17), export `blockInRegion` |
+| `src/ocr/router.js` | `performOcrBlocks()` flatten per halaman, tanpa table-aware | refactor `perPage[]` + batch request: gate per halaman (outcome.image dari cascade = gambar ter-rectify bestRetry) → `analyzeTables` → blok `source:'table-aware'` (ASCII via `formatTableHtmlToText`) menggantikan blok dalam bbox tabel; `_recognizePageCascade` ekspose `image` |
+| `src/ocr/cellOcr.js` | `normalizeBbox` object {x,y,w,h}: precedence ternary salah → `w`/`h` = NaN (bug dormant, blok engine pakai array) | fix precedence: `w = bbox.w \|\| bbox.width \|\| (bbox.right != null ? ...)` |
+| `src/config/index.js` | — | + `tableAware` block: `enabled` (TABLE_AWARE_ENABLED, default off), `serviceUrl` (TABLE_AWARE_SERVICE_URL), `timeout` (TABLE_AWARE_TIMEOUT 1800000) |
+| `.env` | — | + `TABLE_AWARE_ENABLED=true`, `TABLE_AWARE_SERVICE_URL=http://127.0.0.1:5003`, `TABLE_AWARE_TIMEOUT=3600000` |
+| `docker-compose.yml` | 5 services | + `table-ocr` (5003, volume `table_ocr_cache:/root/.paddlex`), env TABLE_AWARE_* di app |
+| `test.js` | 137 tes | + 9 tes section `=== 15. Table-Aware Gate & Config ===` = **145 passed**: config defaults, gate grid wired/blank/border-box/horizontal-only/paragraf, blockInRegion, analyzeTables disabled |
+
+### detail
+
+**Hasil komparasi (dasar desain, 4 halaman sintetis)**:
+- hal 1 (paragraf): img2table 0 tabel ✓ / PaddleX 0 tabel ✓
+- hal 2 (grid wired + colspan): img2table header duplikat ✗ / **PaddleX 1 tabel, colspan benar** (519 dtk incl. init pipeline) ✓
+- hal 3 (borderless): **img2table 1 tabel isi benar** ✓ / PaddleX 0 tabel (borderless tak terdeteksi) ✗
+- hal 4 (landscape grid): img2table tersebar 3 blok ✗ / PaddleX 1 tabel semua sel merger ✗
+
+**Gate `detectWiredGridRegions`** (port produksi dari `c17-triase-v3-test.js`):
+```
+Otsu → garis H run-length (≥60% width) → band antar 2 garis H berturutan
+→ per band: garis V run-length ≥60% tinggi BAND (bukan full page!)
+→ ≥3 garis V inner (margin 5% tepi, tolak border kotak halaman) → region
+```
+Verifikasi sintetis: gate 0/9/0/1 (4/4 benar); paragraf padat 0 (run-length menghindari FP kolom teks terisolasi).
+
+**Env PaddleX yang stabil** (crash PIR/mkldnn, lihat catatan 2b): paddlepaddle **3.3.1**; `PADDLE_PDX_MODEL_SOURCE=modelscope` (huggingface diblokir); `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True`; `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=False`; `FLAGS_use_mkldnn=0`. **JANGAN set `FLAGS_enable_pir_api=0`** (gagal load model PIR: `type of attribute: strides is not right`). `pipe.predict(path)` — input positionally, dict `{"input": ...}` ditolak. PP-StructureV3 (RT-DETR cells/DocLayout) crash access-violation di CPU → ganti `create_pipeline("table_recognition")` (SLANet v1, stabil).
+
+**Dev server Windows**: Task Scheduler `schtasks /run` bisa stuck "Queued" dan cmd/bat parsing rusak (LF/`%PATH%`) → spawn via `Invoke-CimMethod Win32_Process.Create` (proses lahir dari WmiPrvSE, lepas dari job-tree tool; env TIDAK diwarisi dari PowerShell → `run_server.py` set PATH/TESSDATA dari dalam Python).
+
+---
+
 ## Changelog — 2026-07-31 (v21)
 
 ### ringkasan
