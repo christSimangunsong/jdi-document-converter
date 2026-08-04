@@ -29,6 +29,52 @@ function isIndexRow(cells) {
   return nonEmpty.every((c) => /^\d{1,3}$/.test(c.trim()) || /^col\d+$/i.test(c.trim()));
 }
 
+// (v30.1) Gate kualitas grid ASCII: bila struktur tabel korup (artefak
+// OCR ganda), fallback ke plain text per baris agar tidak ada info yang
+// hilang. Sinyal korupsi (conservative — fallback TIDAK menghapus data):
+//   1. maxCols > 20 — tabel absurd (gabungan kolom OCR rusak).
+//   2. Sel berisi artefak grid ("|--|", "++", "----") >= 10% sel non-kosong.
+//   3. Variasi jumlah sel non-kosong antar baris >= 3 nilai — colspan/
+//      struktur hilang saat parsing HTML regex.
+//   4. Ada baris 1-sel di samping baris >= 4 sel — gabungan sel kacau.
+// rawCounts = jumlah sel per baris SEBELUM padding (struktur asli).
+function _tableGridUsable(tableData, rawCounts) {
+  if (!tableData || tableData.length === 0) return false;
+  const maxCols = Math.max(...tableData.map((r) => r.cells.length), 1);
+  if (maxCols > 20) return false;
+
+  let nonEmpty = 0;
+  let gridArtifact = 0;
+  for (const row of tableData) {
+    for (const c of row.cells) {
+      if (!c.trim()) continue;
+      nonEmpty++;
+      if (/[|]{2,}|[+]{2,}|[=-]{4,}/.test(c)) gridArtifact++;
+    }
+  }
+  if (nonEmpty === 0) return false;
+  if (gridArtifact / nonEmpty >= 0.1) return false;
+
+  const distinct = new Set(rawCounts);
+  if (distinct.size >= 3) return false;
+  const hasSparse = rawCounts.some((n) => n === 1);
+  const hasWide = rawCounts.some((n) => n >= 4);
+  if (hasSparse && hasWide) return false;
+
+  return true;
+}
+
+// (v30.1) Fallback tabel korup: satu baris per baris tabel, sel digabung
+// " | " tanpa grid ASCII. Info tabel tetap utuh, format aman.
+function formatTablePlainText(tableData) {
+  const lines = [];
+  for (const row of tableData) {
+    if (row.cells.every((c) => c.trim().length === 0)) continue;
+    lines.push(row.cells.map((c) => c.trim()).join(' | '));
+  }
+  return lines.join('\n');
+}
+
 function formatTableHtmlToText(html) {
   if (!html) return '';
 
@@ -61,6 +107,7 @@ function formatTableHtmlToText(html) {
 
   if (tableData.length === 0) return '';
 
+  const rawCounts = tableData.map((r) => r.cells.length);
   const colCounts = tableData.map((r) => r.cells.length);
   const maxCols = Math.max(...colCounts, 1);
 
@@ -68,6 +115,11 @@ function formatTableHtmlToText(html) {
     while (row.cells.length < maxCols) {
       row.cells.push('');
     }
+  }
+
+  // (v30.1) Grid korup -> plain text per baris (sel " | " sel).
+  if (!_tableGridUsable(tableData, rawCounts)) {
+    return formatTablePlainText(tableData);
   }
 
   const colWidths = [];
@@ -113,4 +165,4 @@ function formatTableHtmlToText(html) {
   return lines.join('\n');
 }
 
-module.exports = { formatTableHtmlToText, cleanCellText, isIndexRow };
+module.exports = { formatTableHtmlToText, formatTablePlainText, _tableGridUsable, cleanCellText, isIndexRow };

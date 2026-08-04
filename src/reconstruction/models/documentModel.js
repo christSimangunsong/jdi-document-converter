@@ -56,7 +56,10 @@ class Line {
     this.blocks = blocks || [];
     this.text = text || this.blocks.map((b) => b.text).join(' ');
     this.bbox = bbox || this._computeBBox();
-    this.page = page != null ? page : blocks[0] ? blocks[0].page : 0;
+    // v30 fix: pakai this.blocks (sudah defaulted), bukan param blocks —
+    // param bisa undefined → "Cannot read properties of undefined ('0')"
+    // saat Line dibuat tanpa page/blocks (mis. test, synthetic lines).
+    this.page = page != null ? page : this.blocks[0] ? this.blocks[0].page : 0;
     this.order = order != null ? order : -1;
     this.type = 'line';
   }

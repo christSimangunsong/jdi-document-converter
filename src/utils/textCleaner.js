@@ -1,3 +1,16 @@
+const { mergeSplitWords } = require('./wordFixer');
+const { fixOcrTypos } = require('./ocrTypos');
+const {
+  PAGE_NUMBER_RE,
+  SALINAN_STAMP_RE,
+  E_STAMP_RE,
+  NIP_LINE_RE,
+  TTD_LINE_RE,
+  SALINAN_SESUAI_RE,
+  KEPALA_BAGIAN_HUKUM_RE,
+  PREAMBLE_HEADING_RE,
+} = require('./garbageTokens');
+
 function isTableGarbage(line) {
   const t = line.trim();
   if (!t || t.length < 5) return false;
@@ -60,7 +73,41 @@ function fixLegalHeadings(text) {
   text = text.replace(/^(Bagian\s+(Kesatu|Kedua|Ketiga|Keempat|Kelima))/gim, '\n\n$1');
   text = text.replace(/^(Paragraf\s+\d+)/gim, '\n\n$1');
   text = text.replace(/^(Menimbang|Mengingat|Memutuskan|Menetapkan|MEMUTUSKAN|MENETAPKAN)\s*:/gim, '\n\n$1:');
+  // (v30) "Menimbang : a. ..." / "MEMUTUSKAN : Menetapkan :" menggabung di
+  // satu baris → pecah agar struktur preambul terbaca.
+  text = text.replace(/(:)\s*(?=(?:Menimbang|Mengingat|Memutuskan|Menetapkan|MEMUTUSKAN|MENETAPKAN)\s*:)/gim, '$1\n');
+  text = text.replace(/;\s*(?=(?:Menimbang|Mengingat|Memutuskan|Menetapkan|MEMUTUSKAN|MENETAPKAN)\s*:)/gim, '\n');
+  text = text.replace(/^((?:Menimbang|Mengingat|Memutuskan|Menetapkan|MEMUTUSKAN|MENETAPKAN)\s*:)\s*/gim, '$1\n');
+  text = text.replace(/;\s+(?=([a-z][.)]|\d{1,2}[.)])\s)/gi, '\n');
   return text;
+}
+
+// (v30/v30.1) Buang chrome halaman dari teks legacy: nomor halaman murni,
+// cap "SALINAN"/"SALINAN E3", fragmen cap "E3", footer sah (NIP, ttd.,
+// "Salinan sesuai dengan aslinya", "KEPALA BAGIAN HUKUM"), plus dedup
+// heading preambul murni ("Menimbang :" dll — unik per dokumen, duplikat
+// dari ghost layer dibuang). Teks legacy tanpa info halaman, jadi semua
+// filter per-baris (regex footer cukup spesifik untuk tidak menyentuh
+// konten).
+function filterPageChrome(text) {
+  const seenHeadings = new Set();
+  return text
+    .split('\n')
+    .filter((l) => {
+      const t = l.trim();
+      if (!t) return true;
+      if (PAGE_NUMBER_RE.test(t) || SALINAN_STAMP_RE.test(t) || E_STAMP_RE.test(t)) return false;
+      if (NIP_LINE_RE.test(t) || TTD_LINE_RE.test(t) || SALINAN_SESUAI_RE.test(t) || KEPALA_BAGIAN_HUKUM_RE.test(t)) {
+        return false;
+      }
+      if (PREAMBLE_HEADING_RE.test(t)) {
+        const key = t.toLowerCase();
+        if (seenHeadings.has(key)) return false;
+        seenHeadings.add(key);
+      }
+      return true;
+    })
+    .join('\n');
 }
 
 function cleanText(rawText) {
@@ -72,7 +119,6 @@ function cleanText(rawText) {
   text = text.replace(/\r/g, '\n');
 
   text = fixHyphenatedLineBreaks(text);
-
   text = text.replace(/[•●▪→➢❖▶]/g, '-');
 
   text = text.replace(/[“”]/g, '"');
@@ -95,6 +141,16 @@ function cleanText(rawText) {
   text = text.replace(/ +\n/g, '\n');
   text = text.replace(/\n +/g, '\n');
 
+  // (v30.1) Normalisasi typo OCR SEBELUM chrome & heading — "BAE III" ->
+  // "BAB III" agar fixLegalHeadings mendeteksi, "MEMUTUISKAN :" ->
+  // "MEMUTUSKAN :" agar dedup heading konsisten.
+  text = fixOcrTypos(text);
+
+  // (v30) Chrome halaman (nomor halaman, cap SALINAN) dibuang SEBELUM
+  // joinBrokenSentences — kalau tidak, baris chrome ikut tergabung ke
+  // kalimat di sekitarnya dan tidak terdeteksi lagi.
+  text = filterPageChrome(text);
+
   text = fixLegalHeadings(text);
 
   text = joinBrokenSentences(text);
@@ -103,6 +159,16 @@ function cleanText(rawText) {
   text = text.replace(/\n{3,}/g, '\n\n');
 
   text = filterTableGarbage(text);
+
+  // (v30) Gabung kata terpecah ("Dala m" -> "Dalam") berbasis kamus.
+  const docTokens = new Set();
+  for (const w of text.split(/[^A-Za-z]+/)) {
+    if (w.length >= 4) docTokens.add(w.toLowerCase());
+  }
+  text = text
+    .split('\n')
+    .map((line) => mergeSplitWords(line, docTokens))
+    .join('\n');
 
   text = text.replace(/^\s+/, '');
   text = text.replace(/\s+$/, '');
@@ -117,4 +183,5 @@ module.exports = {
   fixHyphenatedLineBreaks,
   joinBrokenSentences,
   fixLegalHeadings,
+  filterPageChrome,
 };

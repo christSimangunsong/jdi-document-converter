@@ -19,14 +19,45 @@
 //      "1. Undang-Undang", "kota kecil Kota 1 1", "Rp 5.000", "1: 3:".
 //   3. Normalisasi angka yang menempel di kata: "TAHUN2020" -> "TAHUN 2020",
 //      "NOMOR20" -> "NOMOR 20" ("Rp1.500" aman: 2 huruf).
+//   4. (v30) Gabung kata terpecah: "Dala m" -> "Dalam", "kerjasa ma" ->
+//      "kerjasama" (kamus + validasi dokumen di src/utils/wordFixer.js).
+//   5. (v30) Regex chrome halaman (nomor halaman, cap SALINAN, fragmen E3)
+//      — dipakai outputCleaner.filterPageChrome + textCleaner legacy.
 // ============================================================
+
+const { mergeSplitWords } = require('./wordFixer');
+const { fixOcrTypos } = require('./ocrTypos');
 
 const CJK_RE = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/;
 const SYMBOL_RE = /[\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9\u00BC-\u00BE]/;
-const SYMBOL_RE_G = /[\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9\u00BC-\u00BE]/g;
+const SYMBOL_RE_G =
+  /[\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9\u00BC-\u00BE]/g;
 const SUPERSCRIPT_RE_G = /[\u2070-\u209F\u00B2\u00B3\u00B9]/g;
 const LATIN_RE = /[a-zA-Z\u00C0-\u024F]/;
 const NON_ALNUM_EDGE_RE = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu;
+
+// (v30) Chrome halaman — artefak tepi yang bukan konten:
+//  - Nomor halaman murni: "1", "2", "- 3 -", "·12·"
+//  - Cap salinan: "SALINAN", "SALINAN E3" (E3 = fragmen cap)
+//  - Fragmen cap terisolasi: "E3", "A5"
+const PAGE_NUMBER_RE = /^[-–—·•]?\s*\d{1,3}\s*[-–—·•]?$/;
+const SALINAN_STAMP_RE = /^SALINAN(\s+[A-Z0-9]{1,6})?$/i;
+const E_STAMP_RE = /^[A-Z][0-9]{1,2}$/;
+
+// (v30.1) Chrome footer dokumen hukum Indonesia — footer sah yang
+// berulang di tepi bawah halaman:
+//  - Baris NIP: "NIP. 19701022 1998031006", "NIP : 19701022"
+//  - Baris ttd. murni
+//  - "Salinan sesuai dengan aslinya" (cap bawah)
+//  - "KEPALA BAGIAN HUKUM" (blok tanda tangan, hanya di zona footer)
+const NIP_LINE_RE = /^NIP\.?\s*[:.-]?\s*\d[\d\s.-]{7,}$/i;
+const TTD_LINE_RE = /^ttd\.?\s*:?$/i;
+const SALINAN_SESUAI_RE = /^salinan sesuai dengan aslinya\b/i;
+const KEPALA_BAGIAN_HUKUM_RE = /^kepala bagian hukum$/i;
+
+// (v30.1) Heading preambul murni ("Menimbang :", "Mengingat :",
+// "MEMUTUSKAN :") — unik per dokumen; duplikat (ghost layer) dibuang.
+const PREAMBLE_HEADING_RE = /^(menimbang|mengingat|memutuskan|menetapkan)\s*:\s*$/i;
 
 function isOutputGarbageToken(word) {
   const w = word || '';
@@ -162,19 +193,29 @@ function cleanLineText(text) {
 
   const result = fixInternalDots(normalizeGluedBABRoman(normalizeGluedWordNumber(kept.join(' '))));
 
+  // (v30) Gabung kata terpecah ("Dala m" -> "Dalam", "kerjasa ma" ->
+  // "kerjasama") berbasis kamus — aman: "di mana", "huruf a", "kota
+  // kecil", "peraturan daerah" (frasa sah) tidak tersentuh.
+  const merged = mergeSplitWords(result);
+
+  // (v30.1) Normalisasi typo OCR ("BAE" -> "BAB", "se:besar" ->
+  // "sebesar", "lkegiatan" -> "kegiatan") — berlaku pipeline + sel
+  // tabel + legacy (satu sumber kebenaran).
+  const typoFixed = fixOcrTypos(merged);
+
   // Baris tabel mirror/OCR rusak: seluruh token nyaris tanpa vokal
   // ("| s88rsT smuA rdsqms& rlslmsi Istsxgrnimsq ... |" — tabel yang ter-OCR
   // dengan arah salah). Baris dengan >= 5 token yang >70% konsonan-dense
   // adalah garbage murni. Baris prosa Indonesia normal selalu memuat vokal
   // cukup, dan runtun singkatan pendek (< 5 token) aman.
-  const ratioList = result
+  const ratioList = typoFixed
     .split(' ')
     .map((w) => _consonantRatio(w))
     .filter((r) => r !== null);
   if (ratioList.length >= 5 && ratioList.filter((r) => r >= 0.7).length / ratioList.length >= 0.7) {
     return '';
   }
-  return result;
+  return typoFixed;
 }
 
 // Versi multi-baris: tiap baris dibersihkan sendiri, baris yang tersisa
@@ -190,6 +231,14 @@ function cleanGarbageText(text) {
 module.exports = {
   CJK_RE,
   SYMBOL_RE,
+  PAGE_NUMBER_RE,
+  SALINAN_STAMP_RE,
+  E_STAMP_RE,
+  NIP_LINE_RE,
+  TTD_LINE_RE,
+  SALINAN_SESUAI_RE,
+  KEPALA_BAGIAN_HUKUM_RE,
+  PREAMBLE_HEADING_RE,
   isOutputGarbageToken,
   isGarbageRunToken,
   isListMarker,

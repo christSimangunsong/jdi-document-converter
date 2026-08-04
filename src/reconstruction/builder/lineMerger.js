@@ -3,6 +3,12 @@ const { Line, Block } = require('../models/documentModel');
 const lineMerger = {
   merge(blocks, options = {}) {
     if (!blocks || blocks.length === 0) return [];
+    // (v30) Blok whole-page (fallback rotasi / rescue) membawa teks
+    // BEBERAPA BARIS dalam satu blok ("BAB II\nPasal 1\n..."). Jika
+    // digabung apa adanya, \n di-flatten jadi spasi → BAB/Pasal/menimbang/
+    // footer semua menyatu satu baris → struktur hancur. Pecah dulu per
+    // baris (bbox di-offset Y agar tidak di-merge kembali oleh _isSameLine).
+    blocks = this._splitMultilineBlocks(blocks);
     const threshold = options.sameLineThreshold != null ? options.sameLineThreshold : 12;
     const groups = [];
     let currentGroup = [blocks[0]];
@@ -29,6 +35,38 @@ const lineMerger = {
       return Math.abs(ay - by) < threshold;
     }
     return false;
+  },
+
+  // Pecah blok yang teksnya multi-baris menjadi blok per-baris.
+  // Baris kosong (pemisah paragraf) dipertahankan sebagai blok teks
+  // kosong — nanti jadi baris kosong → _groupIntoParagraphs flush.
+  // bbox diwarisi dengan offset Y per baris agar garis terpisah;
+  // blok tanpa bbox tetap tanpa bbox (tidak akan di-merge).
+  _splitMultilineBlocks(blocks) {
+    const out = [];
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      const text = b.text || '';
+      if (!text.includes('\n')) {
+        out.push(b);
+        continue;
+      }
+      const parts = text.split('\n');
+      for (let k = 0; k < parts.length; k++) {
+        const lineText = parts[k].trim();
+        let bbox = null;
+        if (b.bbox && (b.bbox.w || b.bbox.x2 || b.bbox.h || b.bbox.y2)) {
+          bbox = { ...b.bbox, y: (b.bbox.y || 0) + k * (b.bbox.h || 24) };
+        }
+        out.push({
+          ...b,
+          text: lineText,
+          bbox,
+          order: (b.order != null ? b.order : i) + k,
+        });
+      }
+    }
+    return out;
   },
 
   _toLine(blocks, index) {

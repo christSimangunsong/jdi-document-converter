@@ -5,6 +5,63 @@
 
 ---
 
+## Changelog — 2026-08-05 (v30.1)
+
+### ringkasan
+**Normalisasi typo OCR (dua lapis), pembuangan footer chrome dokumen hukum, fallback tabel korup ke plain text, dan kontrol batas PaddleX via env.** Berdasarkan verifikasi UI Perbub No 8/2020 (SCAN 16 hlm): (1) typo berulang OCR engine bocor ke output ("BAE III", "Fasal 5", "DAIEI", "YANCMAHA ESA", "avat", "Nonor/Nornor", "kepaca", "cengan", "Euvati", "MEMUTUISKAN :", "se:besar-besarnyva", "lkegiatan", "¿udalah"); (2) footer sah berulang tiap halaman (NIP + digit, "ttd.", "Salinan sesuai dengan aslinya", "KEPALA BAGIAN HUKUM") lolos `filterPageChrome` karena bukan baris terakhir dan tidak identik 100%; (3) tabel ASCII grid rusak (colspan hilang saat parsing HTML regex → sel terpotong/misalign "12.03.1.000"); (4) "maks 2 PaddleX/dokumen" hardcode → tidak bisa iterasi cepat. Desain sengaja **generik** (aturan berlaku semua file, bukan hanya korpus Perub No 8).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/utils/ocrTypos.js` (**baru**) | — | `fixOcrTypos(text)` dua lapis: (1) **aturan generik** — kolon antar huruf ("se:besar"→"sebesar"), strip prefiks `¿` (U+00BF lolos filter textCleaner), prefiks `l`+konsonan hanya bila sisa ≥4 huruf ADA di `ID_WORD_DICT` ("lkegiatan"→"kegiatan"; "lampiran"/"lucu" aman), sufiks "nyva"→"nya" (≥3 huruf sebelum, case-aware); (2) **token map** 12 entri case-preserving (ALL-CAPS→ALL-CAPS, Kapital→Kapital): bae→bab, fasal→pasal, daiei→dairi, yancmaha→yang maha, avat→ayat, nonor/nornor→nomor, kepaca→kepada, cengan→dengan, euvati→bupati, memutuiskan→memutuskan, udalah→sudah |
+| `src/utils/garbageTokens.js` | tanpa typo fix | `cleanLineText`: + `fixOcrTypos(merged)` setelah `mergeSplitWords` (pipeline + sel tabel + legacy = satu sumber kebenaran); + ekspor regex chrome footer `NIP_LINE_RE` / `TTD_LINE_RE` / `SALINAN_SESUAI_RE` / `KEPALA_BAGIAN_HUKUM_RE` / `PREAMBLE_HEADING_RE` |
+| `src/reconstruction/cleaner/outputCleaner.js` | chrome hanya baris pertama/terakhir | (1) **zona footer**: 4 baris terbawah tiap halaman di-cek regex footer sah (NIP+≥8 digit, "ttd." murni, "Salinan sesuai dengan aslinya", "KEPALA BAGIAN HUKUM" full-line) — "a.n. Kepala Bagian Hukum" (konten) aman; (2) running header/footer diperluas ke 2 baris teratas/terbawah per halaman (footer berlapis "…KEPALA BAGIAN HUKUM / ttd. / NIP…"); (3) **dedup global heading preambul murni** ("Menimbang :", "Mengingat :", "MEMUTUSKAN :", "Menetapkan :" — unik per dokumen; duplikat = ghost layer dibuang, lintas halaman aman) |
+| `src/utils/textCleaner.js` (legacy) | `filterPageChrome` lokal 3 regex, tanpa typo | (1) `filterPageChrome` pakai regex terpusat dari `garbageTokens` + drop footer per baris + dedup heading preambul (teks legacy tanpa info halaman → filter per-baris; regex cukup spesifik untuk tidak menyentuh konten); (2) `cleanText`: `fixOcrTypos` SEBELUM `filterPageChrome` (agar "BAE III"→"BAB III" terdeteksi `fixLegalHeadings` dan heading typo terdedup) |
+| `src/utils/wordFixer.js` | kamus tanpa kata fiskal | + 9 kata: `pajak`, `retribusi`, `daerah`, `bupati`, `hukum`, `alokasi`, `pengalokasian`, `penyaluran`, `mengalokasikan` ("daerah" kini frasa-guard aktif: "peraturan daerah" tetap aman) |
+| `src/utils/tableFormatter.js` | selalu grid ASCII `+---+` | (1) + `_tableGridUsable(tableData, rawCounts)`: gate korupsi — maxCols > 20, sel ber-artefak grid (`|{2,}`/`+{2,}`/`=-{4,}`) ≥ 10% sel non-kosong, variasi jumlah sel non-kosong antar baris ≥ 3 nilai, atau baris 1-sel di samping baris ≥ 4 sel; (2) + `formatTablePlainText`: fallback satu baris per baris tabel, sel digabung `" | "` (info tetap utuh, grid rusak hilang); bersih → grid tetap |
+| `src/config/index.js` | `tableAware` tanpa batas | + `maxPaddlexPages` = `TABLE_AWARE_MAX_PADDLEX_PAGES` (default 2; `0` = nonaktifkan PaddleX; `parseInt`+NaN check, bukan `||` agar 0 dihormati) |
+| `src/ocr/router.js` | hardcode `paddlexUsed >= 2` | pakai `config.tableAware.maxPaddlexPages` (log menyertakan nilai limit) |
+| `.env` / `docker-compose.yml` | — | + `TABLE_AWARE_MAX_PADDLEX_PAGES` (2; pass-through compose `${TABLE_AWARE_MAX_PADDLEX_PAGES:-2}`) |
+| `test.js` | 201 test | + 13 test v30.1 (token map + case, aturan generik, negatif kata sah, cleanLineText integrasi, wordFixer kata fiskal, filterPageChrome footer/ghost/konten aman, legacy footer+typo, tabel korup→plain / bersih→grid, config limit 0) → **214 passed, 0 failed** |
+
+### detail
+
+**Verifikasi unit**: `BAE III`→`BAB III`, `Fasal 5`→`Pasal 5`, `DAIEI`→`DAIRI`, `YANCMAHA ESA`→`YANG MAHA ESA`, `avat (2)`→`ayat (2)`, `Nonor 8`/`Nornor 8`→`Nomor 8`, `kepaca Kepala`→`kepada Kepala`, `cengan`→`dengan`, `Euvati Dairi`→`Bupati Dairi`, `MEMUTUISKAN :`→`MEMUTUSKAN :`; generik: `se:besar-besarnyva`→`sebesar-besarnya`, `¿udalah`→`sudah`, `lkegiatan`→`kegiatan`, `Lkegiatan`→`Kegiatan`, `besarnyva`→`besarnya`; aman: `BAB I Pasal 5 dengan sudah`, `a.n. NIP. lampiran lucu besarnya`, `12:30 jatuh tempo`, `peraturan daerah`, `kabupaten dairi`. Chrome: footer 4-baris berulang dibuang seluruhnya dari 2 halaman; duplikat "Menimbang :"/"Mengingat :" satu halaman → 1; "a.n. Kepala Bagian Hukum" (konten) bertahan. Tabel: [5,5,1] sel → plain "NO | URAIAN | JUMLAH | KET | SUMBER"; tabel 2 kolom bersih → grid tetap. Lint: 0 error (8 warning pre-existing).
+
+**Catatan**: (1) ghost layer hal 2–3 Perub No 8 (dua versi dokumen saling selang kata dalam satu baris) tetap di luar scope — tidak bisa dipisah generik; (2) dedup heading preambul hanya untuk baris heading MURNI (heading+isi satu baris "Menimbang : a. …" tetap dipisah di treeBuilder, tidak dedup); (3) gate tabel konservatif-biasa-ke-plain: fallback tidak menghapus data (semua sel tetap dirender), jadi false-positive hanya "kurang rapi", bukan "hilang"; (4) limit PaddleX: set `TABLE_AWARE_MAX_PADDLEX_PAGES=0` saat iterasi struktur output (semua wired→img2table ~2 dtk/halaman), default 2 untuk produksi (PaddleX ~9 mnt/halaman CPU).
+
+---
+
+## Changelog — 2026-08-05 (v30)
+
+### ringkasan
+**Normalisasi kata terpecah OCR, pembuangan chrome halaman, dan perbaikan struktur hukum (preambul & Pasal) yang hilang karena baris digabung.** Empat akar masalah diatasi: (1) PaddleOCR memecah satu kata menjadi dua token ("Dala m", "kerjasa ma", "Ta mbahan") — tidak ada mekanisme penggabungan; (2) artefak tepi halaman (nomor halaman, cap "SALINAN"/"SALINAN E3") bocor ke output; (3) `lineMerger._toLine` meratakan `\n` internal blok whole-page → BAB/Pasal/Menimbang/footer menyatu satu baris → struktur hancur; (4) isi preambul ("Menimbang : a. ...") dan isi Pasal yang menempel di judul **hilang** dari markdown (heading dirender, `node.text` dibuang). Bonus: bug pre-existing `Line` constructor (`blocks[0]` pada param `undefined` → semua test async yang memakai `new Line({text, order})` gagal diam-diam dan terhitung ✓ palsu) diperbaiki.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/utils/wordFixer.js` (**baru**) | — | Kamus kosakata hukum Indonesia (~300 kata) + stopword: `tryMergeWord(a,b,docTokens)`, `mergeSplitWords(text,docTokens)`, `countSplitWords(text)`. Konservatif: kedua fragmen huruf murni, gabungan ≥ 5 huruf, ada di kamus ATAU muncul sebagai token di dokumen yang sama; frasa sah ("kerja sama", "peraturan daerah") tidak digabung kecuali bentuk gabungan ada di dokumen |
+| `src/utils/garbageTokens.js` | `cleanLineText` tanpa penggabungan kata | (1) + `mergeSplitWords` di akhir `cleanLineText` (satu sumber kebenaran tetap); (2) + regex chrome `PAGE_NUMBER_RE` / `SALINAN_STAMP_RE` / `E_STAMP_RE` + ekspor |
+| `src/reconstruction/builder/lineMerger.js` | blok multi-baris di-flatten `\n`→spasi (akar kerusakan struktur) | + `_splitMultilineBlocks` di awal `merge()`: blok ber-`\n` dipecah per baris (bbox offset Y + order inkremental, baris kosong dipertahankan → flush paragraf) |
+| `src/reconstruction/cleaner/outputCleaner.js` | `cleanLines` hanya token cleaning | (1) `cleanLines` + pass docTokens → `mergeSplitWords` per baris; (2) + `filterPageChrome(lines)`: nomor halaman murni, "SALINAN [E3]", fragmen cap "E3" di baris pertama/terakhir tiap halaman dibuang; running header/footer (≥50% halaman di posisi tepi) dibuang, baris unik aman |
+| `src/reconstruction/pipeline.js` | `cleanLines` tanpa chrome | + `filterPageChrome(ctx.lines)` setelah `cleanLines` |
+| `src/reconstruction/builder/documentTreeBuilder.js` | preambul & Pasal satu baris penuh; judul Pasal menyimpan isi | (1) + `_expandPreambleLines`/`_splitPreambleText` di `build()` (sebelum `detectTableFromLines` agar indeks konsisten): "Menimbang : a. ...; b. ...", "MEMUTUSKAN : Menetapkan :" dipecah per komponen; kalimat biasa ("dengan menimbang : bahwa...") aman (hanya pecah setelah ":"/";"); (2) PASAL: judul & isi menempel dipisah ("Pasal 1 Setiap orang..." → title "Pasal 1" + body); `_createNode` dukung `extra.body` |
+| `src/reconstruction/output/markdownGenerator.js` | menimbang/mengingat/memutuskan/menetapkan & pasal hanya heading → **isi hilang** | (1) pasal: `**Pasal N**` + body `node.text` (jika ≠ title); (2) preambul: heading + sisa isi setelah ":" dirender (`_legalRest`) |
+| `src/utils/textCleaner.js` (legacy) | `cleanText` tanpa chrome/merge | (1) `filterPageChrome` dijalankan SEBELUM `joinBrokenSentences` (kalau tidak chrome ikut tergabung ke kalimat); (2) `mergeSplitWords` per baris di akhir; (3) `fixLegalHeadings` juga memecah "Menimbang : a. ..." / "MEMUTUSKAN : Menetapkan :" |
+| `src/ocr/router.js` | accepted page langsung return | Gate kata terpecah: `countSplitWords(text) ≥ 2` dan retry masih ada → tidak early-return, OCR ulang upscale 1.5× (hasil terbaik tetap disimpan) |
+| `src/reconstruction/models/documentModel.js` | `Line` constructor `blocks[0]` di param `undefined` → TypeError | pakai `this.blocks` (sudah defaulted) — **fix bug pre-existing**: semua test async `new Line({text, order})` sebelumnya crash → rejected promise → ✓ palsu (tidak pernah benar-benar dieksekusi) |
+| `test.js` | 187 test | + 14 test v30 (wordFixer merge/safe-frasa/docTokens/gate, chrome filter, lineMerger multi-baris, preambul split, Pasal judul/body, markdown render, textCleaner legacy) → **201 passed, 0 failed** |
+
+### detail
+
+**Verifikasi (unit + smoke)**: `Dala m`→`Dalam`, `kerjasa ma`→`kerjasama`, `Ta mbahan`→`Tambahan`; aman: `di mana`, `huruf a`, `kota kecil`, `peraturan daerah`, `kabupaten dairi`; `mergeSplitWords('kerja sama', docTokens{kerjasama})`→`kerjasama`, docTokens{kerja,sama}→tetap frasa. Preambul "Menimbang : a. X; b. Y; Mengingat : 1. UU; MEMUTUSKAN : Menetapkan : hal" → 8 baris terpisah, legalParser menandai 4 komponen, markdown memuat heading + semua isi ("a. bahwa X", "1. UU Nomor 23 Tahun 2014", "Peraturan tentang hal"). Pasal "Pasal 1 Setiap orang yang..." → title + body terpisah, markdown `**Pasal 1**` + body. Chrome: "2", "- 3 -", "SALINAN E3" di tepi halaman dibuang; "2020" (tahun) dan baris tepi unik aman. Lint: 0 error (23 warning pre-existing).
+
+**Catatan**: (1) gate router hanya menambah SATU retry (upscale 1.5×) bila halaman sudah diterima tapi memuat ≥2 kata terpecah — tanpa regresi kecepatan untuk dokumen bersih; (2) `filterPageChrome` di pipeline konservatif: hanya baris pertama/terakhir per halaman, tidak menyentuh konten tengah; (3) fix `documentModel.js` membuat test async yang tadinya ✓ palsu benar-benar jalan — jumlah test yang dilaporkan naik 187 → **201**.
+
+---
+
 ## Changelog — 2026-08-04 (v29.5)
 
 ### ringkasan

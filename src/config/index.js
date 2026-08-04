@@ -74,6 +74,12 @@ const config = {
     enabled: process.env.TABLE_AWARE_ENABLED === 'true' || process.env.TABLE_AWARE_ENABLED === '1',
     serviceUrl: process.env.TABLE_AWARE_SERVICE_URL || '',
     timeout: parseInt(process.env.TABLE_AWARE_TIMEOUT, 10) || 1800000,
+    // (v30.1) Batas halaman PaddleX per dokumen (PaddleX wired-grid ~9
+    // mnt/halaman CPU). 0 = nonaktifkan PaddleX (semua wired -> img2table).
+    maxPaddlexPages: (() => {
+      const v = parseInt(process.env.TABLE_AWARE_MAX_PADDLEX_PAGES, 10);
+      return Number.isNaN(v) ? 2 : v;
+    })(),
   },
   sidecar: {
     autostart: process.env.SIDECAR_AUTOSTART !== 'false' && process.env.SIDECAR_AUTOSTART !== '0',

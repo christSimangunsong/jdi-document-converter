@@ -12,6 +12,7 @@ const { TesseractEngine } = require('./engines/tesseractEngine');
 const { SuryaEngine } = require('./engines/suryaEngine');
 const { rotateCanvas } = require('./orientationDetector');
 const { cleanGarbageText, cleanLineText } = require('../utils/garbageTokens');
+const { countSplitWords } = require('../utils/wordFixer');
 
 factory.registerEngine('paddle', PaddleEngine);
 factory.registerEngine('tesseract', TesseractEngine);
@@ -155,6 +156,7 @@ async function _recognizePageCascade(i, imageBuffers, jobCache) {
   let bestRetry = 0;
   let bestAngle = null;
   let lastError = null;
+  let bestSplitCount = 0;
 
   for (let retry = 0; retry <= maxRetries; retry++) {
     const img = await _getPageImage(imageBuffers, i, retry, engCfg, jobCache);
@@ -165,6 +167,7 @@ async function _recognizePageCascade(i, imageBuffers, jobCache) {
         const blocks = await engine.recognizeBlocks(img);
         const score = computeQualityScore(blocks);
         const text = blocks.map((b) => b.text).join('\n');
+        const splitCount = countSplitWords(text);
 
         if (!bestScore || score.score > bestScore.score) {
           bestScore = score;
@@ -172,17 +175,27 @@ async function _recognizePageCascade(i, imageBuffers, jobCache) {
           bestText = text;
           bestEngine = engineName;
           bestRetry = retry;
+          bestSplitCount = splitCount;
         }
 
         if (shouldAcceptPage(score)) {
-          return { score, blocks, text, engine: engineName, accepted: true, image: img };
+          // (v30) Gate kata terpecah: halaman yang LULUS gate kualitas tapi
+          // memuat >= 2 kata terpecah ("Dala m", "kerjasa ma") di-OCR ulang
+          // sekali dengan upscale 1.5x — biasanya cukup menghilangkan
+          // pemecahan kata tanpa mengorbankan kecepatan. Retry berikutnya
+          // menangani; hasil terbaik tetap dipertahankan.
+          if (splitCount >= 2 && retry < maxRetries) {
+            logger.info(`  Halaman ${i + 1} diterima namun ${splitCount} kata terpecah, retry upscale 1.5x...`);
+          } else {
+            return { score, blocks, text, engine: engineName, accepted: true, image: img };
+          }
         }
       } catch (error) {
         lastError = error;
         logger.warn(`  Halaman ${i + 1} engine "${engineName}" percobaan ${retry + 1} gagal: ${error.message}`);
       }
     }
-    if (bestScore && shouldAcceptPage(bestScore)) break;
+    if (bestScore && shouldAcceptPage(bestScore) && !(bestSplitCount >= 2 && retry < maxRetries)) break;
     if (retry < maxRetries) {
       logger.info(
         `  Halaman ${i + 1} kualitas rendah (score: ${bestScore ? bestScore.score.toFixed(2) : '0.00'}, words: ${bestScore ? bestScore.wordCount : 0}), retry ${retry + 1}/${maxRetries} dengan strategi alternatif...`,
@@ -358,8 +371,7 @@ async function _tryRotationVariants(i, imageBuffers, engCfg) {
   for (const variant of variants) {
     try {
       const base = await preprocessImage(imageBuffers[i], { steps });
-      const transformed =
-        variant.angle === 'M' ? await _mirrorCanvas(base) : await rotateCanvas(base, variant.angle);
+      const transformed = variant.angle === 'M' ? await _mirrorCanvas(base) : await rotateCanvas(base, variant.angle);
       const img = transformed;
       for (const engineName of getEngineCandidates(engCfg.engine)) {
         const engine = await getEngine(engineName, engCfg);
@@ -483,7 +495,10 @@ function _tableAwareWins(taBlock, ocrBlocks) {
     // tolak. Hanya berlaku bila prosa terbaca (mengandung kata umum) —
     // blok mirror/garbage tidak boleh memblokir tabel yang baik.
     const wholePage = ocrBlocks.filter((b) => !(b.bbox && (b.bbox.w || b.bbox.x2 || b.bbox.h || b.bbox.y2)));
-    if (wholePage.length > 0 && wholePage.some((b) => commonWordRatio(b.text) !== null && commonWordRatio(b.text) > 0)) {
+    if (
+      wholePage.length > 0 &&
+      wholePage.some((b) => commonWordRatio(b.text) !== null && commonWordRatio(b.text) > 0)
+    ) {
       const taLower = (taBlock.text || '').toLowerCase();
       for (const b of wholePage) {
         if (commonWordRatio(b.text) === null || commonWordRatio(b.text) === 0) continue;
@@ -547,10 +562,7 @@ async function _repairWholePageTopBand(canvas, text, engine, engCfg) {
     return letters >= 10 && digits <= 4 && t.length >= 15;
   });
   if (firstReadable <= 0) return null; // tidak ada prefix garbage
-  const garbageLen = lines
-    .slice(0, firstReadable)
-    .join('\n')
-    .trim().length;
+  const garbageLen = lines.slice(0, firstReadable).join('\n').trim().length;
   if (garbageLen < 4) return null;
 
   const bandH = Math.min(420, canvas.height);
@@ -632,9 +644,7 @@ async function _rescueGarbageBlocks(pageCanvas, blocks, engine, engCfg) {
     // Blok tanpa bbox = hasil recognize dalam bentuk string (seluruh halaman
     // satu region, mis. jalur fallback rotasi) -> gunakan bbox seluruh halaman.
     const hasBbox = !!(block.bbox && (block.bbox.w || block.bbox.x2 || block.bbox.h || block.bbox.y2));
-    const blockBbox = hasBbox
-      ? block.bbox
-      : { x: 0, y: 0, w: pageCanvas.width, h: pageCanvas.height };
+    const blockBbox = hasBbox ? block.bbox : { x: 0, y: 0, w: pageCanvas.width, h: pageCanvas.height };
 
     const score = computePageScore([{ text, confidence: block.confidence }]);
     const common = commonWordRatio(text);
@@ -738,8 +748,8 @@ async function _tryRescueBlock(pageCanvas, block, engine, engCfg) {
   const pad = 12;
   const x = Math.max(0, Math.floor(b.x || 0) - pad);
   const y = Math.max(0, Math.floor(b.y || 0) - pad);
-  const w = Math.min(Math.ceil((b.w || 0) || (b.x2 ? b.x2 - b.x : 0)) + pad * 2, pw - x);
-  const h = Math.min(Math.ceil((b.h || 0) || (b.y2 ? b.y2 - b.y : 0)) + pad * 2, ph - y);
+  const w = Math.min(Math.ceil(b.w || 0 || (b.x2 ? b.x2 - b.x : 0)) + pad * 2, pw - x);
+  const h = Math.min(Math.ceil(b.h || 0 || (b.y2 ? b.y2 - b.y : 0)) + pad * 2, ph - y);
   if (w < 20 || h < 20) return null;
 
   const { createCanvas } = await import('@napi-rs/canvas');
@@ -848,8 +858,12 @@ async function _tryRescueBlock(pageCanvas, block, engine, engCfg) {
 
   if (improvedBands === 0) {
     console.error(
-      'RESCUE-NOIMPROVE bands=', bands.length,
-      'cands=', candidates.map((c) => `${c.angle}[${Number(c.readability).toFixed(2)}]${c.text.replace(/\n/g, ' ').slice(0, 40)}`).join(' | '),
+      'RESCUE-NOIMPROVE bands=',
+      bands.length,
+      'cands=',
+      candidates
+        .map((c) => `${c.angle}[${Number(c.readability).toFixed(2)}]${c.text.replace(/\n/g, ' ').slice(0, 40)}`)
+        .join(' | '),
     );
     return null; // tidak ada baris yang membaik
   }
@@ -884,21 +898,40 @@ async function _tryRescueBlock(pageCanvas, block, engine, engCfg) {
     (!flaggedCjk || newCjk < oldCjk) &&
     (!flaggedGarbage || newScore.garbageRatio < oldScore.garbageRatio) &&
     (!flaggedCommon || (newCommon !== null && newCommon >= 0.02));
-  const accepted =
-    improvedBands > 0 &&
-    signalImproved &&
-    newQualityScore.score >= oldQualityScore.score - 0.03;
+  const accepted = improvedBands > 0 && signalImproved && newQualityScore.score >= oldQualityScore.score - 0.03;
   console.error(
-    'RESCUE-ACCEPT?', accepted,
-    'cands=', candidates.length, 'bands=', bands.length,
-    'improved=', improvedBands,
-    'cjk:', Number(newCjk).toFixed(3), '->', Number(oldCjk).toFixed(3),
-    'g:', Number(newScore.garbageRatio).toFixed(2), '->', Number(oldScore.garbageRatio).toFixed(2),
-    'common:', newCommon, '->', oldCommon,
-    'score:', newQualityScore.score.toFixed(3), '->', oldQualityScore.score.toFixed(3),
-    'words:', newScore.wordCount, '->', oldScore.wordCount,
-    'angles:', bandLog.join('/'),
-    'assembled:', text.replace(/\n/g, ' ').slice(0, 90),
+    'RESCUE-ACCEPT?',
+    accepted,
+    'cands=',
+    candidates.length,
+    'bands=',
+    bands.length,
+    'improved=',
+    improvedBands,
+    'cjk:',
+    Number(newCjk).toFixed(3),
+    '->',
+    Number(oldCjk).toFixed(3),
+    'g:',
+    Number(newScore.garbageRatio).toFixed(2),
+    '->',
+    Number(oldScore.garbageRatio).toFixed(2),
+    'common:',
+    newCommon,
+    '->',
+    oldCommon,
+    'score:',
+    newQualityScore.score.toFixed(3),
+    '->',
+    oldQualityScore.score.toFixed(3),
+    'words:',
+    newScore.wordCount,
+    '->',
+    oldScore.wordCount,
+    'angles:',
+    bandLog.join('/'),
+    'assembled:',
+    text.replace(/\n/g, ' ').slice(0, 90),
   );
   if (!accepted) return null;
 
@@ -987,10 +1020,10 @@ async function performOcrBlocks(imageBuffers, onProgress) {
       const regions = detectWiredGridRegions(outcome.image);
       const wired = regions.length > 0;
       let engine = wired ? 'paddlex' : 'img2table';
-      if (wired && paddlexUsed >= 2) {
+      if (wired && paddlexUsed >= config.tableAware.maxPaddlexPages) {
         engine = 'img2table';
         logger.info(
-          `  Halaman ${i + 1}: grid wired dialihkan ke img2table (maks 2 PaddleX/dokumen)`,
+          `  Halaman ${i + 1}: grid wired dialihkan ke img2table (maks ${config.tableAware.maxPaddlexPages} PaddleX/dokumen)`,
         );
       }
       if (engine === 'paddlex') paddlexUsed++;
@@ -1005,9 +1038,7 @@ async function performOcrBlocks(imageBuffers, onProgress) {
   }
 
   if (taRequests.length > 0) {
-    const taResults = await analyzeTables(
-      taRequests.map((r) => ({ image: r.image, engine: r.engine })),
-    );
+    const taResults = await analyzeTables(taRequests.map((r) => ({ image: r.image, engine: r.engine })));
     if (taResults) {
       for (let k = 0; k < taResults.length; k++) {
         const pageInfo = perPage[taRequests[k].pageIndex];
@@ -1042,7 +1073,10 @@ async function performOcrBlocks(imageBuffers, onProgress) {
           }
         }
         if (newBlocks.length > 0) {
-          const taText = newBlocks.map((tb) => tb.text).join('\n').toLowerCase();
+          const taText = newBlocks
+            .map((tb) => tb.text)
+            .join('\n')
+            .toLowerCase();
           const kept = pageInfo.blocks.filter((b) => {
             if (newBlocks.some((tb) => blockInRegion(b, tb))) return false;
             // Blok whole-page (tanpa bbox): sisa konten tabel yang terbaca
@@ -1052,8 +1086,7 @@ async function performOcrBlocks(imageBuffers, onProgress) {
             const common = commonWordRatio(b.text);
             const digits = (b.text.match(/\d/g) || []).length;
             const wc = computePageScore([{ text: b.text, confidence: b.confidence }]).wordCount;
-            const noSentences =
-              (common === 0 && digits < 15) || (common === null && wc >= 3 && digits < 8);
+            const noSentences = (common === 0 && digits < 15) || (common === null && wc >= 3 && digits < 8);
             if (noSentences) return false;
             // Duplikat konten: ≥60% baris blok (kata ≥4 huruf) muncul di teks
             // tabel table-aware → blok hanya versi prosa dari tabel yang sama.
@@ -1136,4 +1169,12 @@ const ocrRouter = {
   tableAwareWins: _tableAwareWins,
 };
 
-module.exports = { ocrRouter, _rescueGarbageBlocks, _tryRescueBlock, _filterWholePageGarbageLines, _repairWholePageTopBand, _hasMirrorGarbage, _reOcrWithScaleEscalation };
+module.exports = {
+  ocrRouter,
+  _rescueGarbageBlocks,
+  _tryRescueBlock,
+  _filterWholePageGarbageLines,
+  _repairWholePageTopBand,
+  _hasMirrorGarbage,
+  _reOcrWithScaleEscalation,
+};

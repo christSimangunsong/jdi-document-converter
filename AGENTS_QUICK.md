@@ -1,6 +1,6 @@
 # Quick Reference — jdi-document-converter
 
-Instruksi ringkas untuk sesi OpenCode. Changelog/progres lengkap ada di `CHANGELOG.md` (riwayat v1–v17 juga di `AGENTS.md`).
+Instruksi ringkas untuk sesi OpenCode. Changelog/progres lengkap ada di `CHANGELOG.md` (riwayat v1–v17 hingga terbaru).
 
 ## Arsitektur
 
@@ -19,8 +19,9 @@ Instruksi ringkas untuk sesi OpenCode. Changelog/progres lengkap ada di `CHANGEL
 |---|---|
 | `npm start` | Web server `localhost:3000` |
 | `npm run cli` | CLI dari `data/links.json` |
-| `npm test` | `node --experimental-vm-modules test.js` (113 tests) |
+| `npm test` | `node --experimental-vm-modules test.js` (214 tests) |
 | `npm run lint` | `eslint .` (2-space, single quotes) |
+| `npm run sidecars` | Manual launcher: deskew (5002) + table-ocr (5003) |
 | `npm run format` | `prettier --write "**/*.{js,json,css,html}"` |
 
 ## CJS / ESM Hybrid
@@ -98,7 +99,7 @@ Project CJS (`require`), **3 dynamic ESM imports** — jangan diubah ke `require
 | POST | `/process-urls` | Body `{urls:[]}` (max 20) **SSE streaming FIFO** |
 | POST | `/process-upload` | Multipart field `pdf` |
 | POST | `/process-uploads` | Multipart field `pdf` (max 20) **SSE streaming FIFO** |
-| GET | `/download/:file` | Download `.txt` dari `config.outputDir` |
+| GET | `/download/:file` | Download `.txt` — file di `outputDir`, **fallback ke `output_text` DB** (v29.5) |
 | GET | `/api/activities` | List activities (200 terbaru) |
 | GET | `/api/activities/stats` | Statistik + daily 7 hari |
 | GET | `/api/activities/:id` | Detail activity by ID |
@@ -173,5 +174,5 @@ Deteksi baris sampah OCR (digit-dominated, short words) dan hapus dari akhir tek
 - Prettier: singleQuote, trailingComma all, printWidth 120, tabWidth 2
 - CI: GitHub Actions, push/PR ke `main`, Node 18 & 20, `lint → test`
 - Docker: `node:20-slim`, tini, EXPOSE 3000
-- `docker-compose`: 5 services (app + sidecar + surya-sidecar + deskew-sidecar + MySQL 8), healthcheck db, volume persistensi
+- `docker-compose`: 6 services (app + sidecar + surya-sidecar + deskew-sidecar + table-ocr + MySQL 8), healthcheck db, volume persistensi
 - Per-page error handling: imageConverter.js & engine.js **skip** halaman gagal (blank canvas / string kosong) — tidak abort seluruh dokumen

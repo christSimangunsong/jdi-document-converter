@@ -25,6 +25,13 @@ const documentTreeBuilder = {
       return this._emptyRoot();
     }
 
+    // (v30) Ekspansi preambul: baris hasil OCR yang menggabung struktur
+    // ("Menimbang : a. ...; b. ..." / "MEMUTUSKAN : Menetapkan :")
+    // dipecah menjadi baris-baris terpisah agar legalParser menandai
+    // tiap komponen dan isi daftar tidak hilang. Dijalankan SEBELUM
+    // detectTableFromLines agar indeks baris konsisten.
+    lines = this._expandPreambleLines(lines);
+
     const tableResults = detectTableFromLines(lines);
     const tableLineIdx = new Set();
     for (const tr of tableResults) {
@@ -51,6 +58,54 @@ const documentTreeBuilder = {
 
   _groupPos(group) {
     return group.pos != null ? group.pos : Number.MAX_SAFE_INTEGER;
+  },
+
+  // (v30) Pecah baris preambul yang menggabung struktur hukum. Aturan
+  // konservatif — hanya memecah pada penanda yang jelas:
+  //   1. "Menimbang : a. ..." / "Mengingat : 1. ..." → "Menimbang :" + isi
+  //   2. "MEMUTUSKAN : Menetapkan : ..." (": " dan "; " sebelum kata
+  //      preambul lain) → per komponen
+  //   3. "; a. ..." / "; 1. ..." di tengah baris → baris baru tanpa ";"
+  // Baris isi kalimat biasa ("dengan menimbang : bahwa...") TIDAK terpecah
+  // karena aturan 2 mensyaratkan kata preambul didahului ":" atau ";".
+  _expandPreambleLines(lines) {
+    const out = [];
+    for (const line of lines) {
+      let text = (line.text || '').trim();
+      if (!text || /[|+]/u.test(text) || text.includes('\t')) {
+        out.push(line);
+        continue;
+      }
+      const pieces = this._splitPreambleText(text);
+      if (pieces.length <= 1) {
+        out.push(line);
+        continue;
+      }
+      for (let i = 0; i < pieces.length; i++) {
+        out.push({
+          ...line,
+          text: pieces[i],
+          order: (line.order != null ? line.order : 0) + i,
+        });
+      }
+    }
+    return out;
+  },
+
+  _splitPreambleText(text) {
+    let t = text;
+    // 1. Komponen preambul setelah ":" atau ";" ("MEMUTUSKAN : Menetapkan :")
+    t = t.replace(/(:)\s+(?=(?:Menimbang|Mengingat|Memutuskan|Menetapkan)\s*:)/gi, '$1\n');
+    t = t.replace(/;\s+(?=(?:Menimbang|Mengingat|Memutuskan|Menetapkan)\s*:)/gi, '\n');
+    // 2. "Menimbang :" / "Mengingat :" di awal baris (termasuk baris hasil
+    //    langkah 1) + isi yang menempel
+    t = t.replace(/^(Menimbang|Mengingat)\s*:\s*/gim, '$1 :\n');
+    // 3. Penanda daftar setelah ";" ("; a. bahwa ..." → "a. bahwa ...")
+    t = t.replace(/;\s+(?=([a-z][.)]|\d{1,2}[.)])\s)/gi, '\n');
+    return t
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s);
   },
 
   _emptyRoot() {
@@ -200,7 +255,17 @@ const documentTreeBuilder = {
       return this._createNode('paragraf', text, lines, { level: 3, originalType: 'PARAGRAF' });
     }
     if (HEADING_PATTERNS.PASAL.test(text)) {
-      return this._createNode('pasal', text, lines, { level: 4, originalType: 'PASAL' });
+      // (v30) Pisahkan judul dari isi yang menempel: "Pasal 1 Setiap orang
+      // yang..." → title "Pasal 1", body "Setiap orang yang..." — isi tidak
+      // lagi hilang di dalam heading.
+      const m = text.match(/^(Pasal\s+([0-9]+|[IVXLCDM]+))(?:\s+(.+))?$/i);
+      const title = m ? m[1] : text;
+      const gluedBody = m && m[2] && m[3] ? m[3].trim() : '';
+      return this._createNode('pasal', title, gluedBody ? [firstLine, { ...firstLine, text: gluedBody }] : lines, {
+        level: 4,
+        originalType: 'PASAL',
+        body: gluedBody || null,
+      });
     }
     const ayatMatch = text.match(/^\((\d+)\)\s*(.+)/);
     if (ayatMatch) {
@@ -236,17 +301,20 @@ const documentTreeBuilder = {
   },
 
   _createNode(type, text, lines, extra = {}) {
-    const fullText = lines
-      .map((l, i) => {
-        let t = (l.text || '').trim();
-        if (i === 0 && type === 'ayat') t = t.replace(/^\(\d+\)\s*/, '');
-        if (i === 0 && (type === 'huruf' || type === 'angka')) t = t.replace(/^[a-z0-9][.)]\s*/i, '');
-        return t;
-      })
-      .filter((t) => t)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const fullText =
+      extra.body != null
+        ? extra.body
+        : lines
+          .map((l, i) => {
+            let t = (l.text || '').trim();
+            if (i === 0 && type === 'ayat') t = t.replace(/^\(\d+\)\s*/, '');
+            if (i === 0 && (type === 'huruf' || type === 'angka')) t = t.replace(/^[a-z0-9][.)]\s*/i, '');
+            return t;
+          })
+          .filter((t) => t)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
 
     const number = (() => {
       let num = null;

@@ -355,7 +355,10 @@ test('strips border "=" artifact lines in cells', () => {
     .filter((l) => l.includes('|'))
     .map((l) => l.trim());
   assert.ok(contentLines.length >= 1);
-  assert.ok(contentLines.some((l) => l.includes('NO|KEBIJAKAN')), `konten hilang: ${result}`);
+  assert.ok(
+    contentLines.some((l) => l.includes('NO|KEBIJAKAN')),
+    `konten hilang: ${result}`,
+  );
   assert.ok(
     contentLines.every((l) => l !== '|' && !/^\|[-=]+\|$/.test(l.replace(/ /g, ''))),
     `artefak border tersisa: ${result}`,
@@ -1618,7 +1621,10 @@ test('cleanLineText: angka & marker setelah penanda daftar tetap utuh', () => {
 
 test('cleanLineText: dot internal artefak OCR dirapikan, singkatan sah utuh', () => {
   assert.strictEqual(cleanLineText('L SAL.INAN T BUPATI DAIRI'), 'L SALINAN T BUPATI DAIRI');
-  assert.strictEqual(cleanLineText('ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006'), 'ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006');
+  assert.strictEqual(
+    cleanLineText('ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006'),
+    'ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006',
+  );
   assert.strictEqual(cleanLineText('a.n. Kepala Bagian Hukum'), 'a.n. Kepala Bagian Hukum');
 });
 
@@ -1631,12 +1637,14 @@ test('cleanLineText: BAB menempel dengan angka Romawi dirapikan (BABI)', () => {
 
 test('cleanLineText: baris tabel mirror konsonan-dense dihapus, prosa aman', () => {
   assert.strictEqual(
-    cleanLineText('| s88rsT smuA rdsqms& rlslmsi Istsxgrnimsq ns1sesd .d Tusbi9t sggrtsT dsmu9 rdsqms2 eisjp2 rfsqmse n |'),
-    ''
+    cleanLineText(
+      '| s88rsT smuA rdsqms& rlslmsi Istsxgrnimsq ns1sesd .d Tusbi9t sggrtsT dsmu9 rdsqms2 eisjp2 rfsqmse n |',
+    ),
+    '',
   );
   assert.strictEqual(
     cleanLineText('Bupati Dairi menetapkan peraturan daerah yang mengatur sampah'),
-    'Bupati Dairi menetapkan peraturan daerah yang mengatur sampah'
+    'Bupati Dairi menetapkan peraturan daerah yang mengatur sampah',
   );
   assert.strictEqual(cleanLineText('APBD DAK DAU'), 'APBD DAK DAU');
   assert.strictEqual(cleanLineText('Bupati Dairi Kabupaten Dairi'), 'Bupati Dairi Kabupaten Dairi');
@@ -1645,8 +1653,301 @@ test('cleanLineText: baris tabel mirror konsonan-dense dihapus, prosa aman', () 
 test('cleanLineText: baris tabel sah dengan angka tetap utuh', () => {
   assert.strictEqual(
     cleanLineText('Kelurahan Sidikalang 366.000.000,00 1.500.000,00'),
-    'Kelurahan Sidikalang 366.000.000,00 1.500.000,00'
+    'Kelurahan Sidikalang 366.000.000,00 1.500.000,00',
   );
+});
+
+// ========================================================================
+// 14.5 v30 — kata terpecah, chrome halaman, struktur preambul & Pasal
+// ========================================================================
+console.log('\n=== 14.5 v30 (wordFixer + chrome + preambul) ===');
+
+const { mergeSplitWords, countSplitWords } = require('./src/utils/wordFixer');
+const { filterPageChrome } = require('./src/reconstruction/cleaner/outputCleaner');
+
+test('wordFixer: kata terpecah digabung (Dala m, kerjasa ma, Ta mbahan)', () => {
+  assert.strictEqual(mergeSplitWords('Dala m'), 'Dalam');
+  assert.strictEqual(mergeSplitWords('kerjasa ma'), 'kerjasama');
+  assert.strictEqual(mergeSplitWords('Ta mbahan'), 'Tambahan');
+  assert.strictEqual(mergeSplitWords('Dala m Pasal 1 hal ini'), 'Dalam Pasal 1 hal ini');
+});
+
+test('wordFixer: frasa sah tidak digabung (di mana, huruf a, kota kecil)', () => {
+  assert.strictEqual(mergeSplitWords('di mana'), 'di mana');
+  assert.strictEqual(mergeSplitWords('huruf a'), 'huruf a');
+  assert.strictEqual(mergeSplitWords('kota kecil'), 'kota kecil');
+  assert.strictEqual(mergeSplitWords('peraturan daerah'), 'peraturan daerah');
+  assert.strictEqual(mergeSplitWords('kabupaten dairi'), 'kabupaten dairi');
+});
+
+test('wordFixer: docTokens memperkuat validasi dokumen', () => {
+  assert.strictEqual(mergeSplitWords('kerja sama', new Set(['kerjasama'])), 'kerjasama');
+  assert.strictEqual(mergeSplitWords('kerja sama', new Set(['kerja', 'sama'])), 'kerja sama');
+});
+
+test('wordFixer: countSplitWords menghitung pasangan terpecah (gate retry)', () => {
+  assert.strictEqual(countSplitWords('Dala m kerjasa ma'), 2);
+  assert.strictEqual(countSplitWords('kota kecil di mana'), 0);
+});
+
+test('cleanLineText: kata terpecah digabung di pipeline cleaning', () => {
+  assert.strictEqual(cleanLineText('Dala m'), 'Dalam');
+  assert.strictEqual(cleanLineText('Bupati menetapkan Ta mbahan'), 'Bupati menetapkan Tambahan');
+});
+
+test('filterPageChrome: nomor halaman & cap SALINAN dibuang dari tepi', () => {
+  const lines = [
+    { text: 'BAB I KETENTUAN UMUM', page: 1 },
+    { text: 'Pasal 1', page: 1 },
+    { text: '2', page: 1 },
+    { text: 'SALINAN E3', page: 2 },
+    { text: 'Pasal 2', page: 2 },
+    { text: '- 3 -', page: 2 },
+  ];
+  const out = filterPageChrome(lines);
+  assert.deepStrictEqual(
+    out.map((l) => l.text),
+    ['BAB I KETENTUAN UMUM', 'Pasal 1', 'Pasal 2'],
+  );
+});
+
+test('filterPageChrome: konten tepi yang unik tidak dibuang', () => {
+  const lines = [
+    { text: 'Judul halaman satu', page: 1 },
+    { text: 'isi halaman 1', page: 1 },
+    { text: 'Judul halaman dua', page: 2 },
+    { text: 'isi halaman 2', page: 2 },
+  ];
+  const out = filterPageChrome(lines);
+  assert.strictEqual(out.length, 4, 'baris unik di tepi tidak boleh hilang');
+});
+
+test('lineMerger: blok multi-baris (whole-page) dipecah per baris', () => {
+  const blocks = [
+    { text: 'BAB II\nPasal 1\nSetiap orang yang', confidence: 1, bbox: { x: 0, y: 0, w: 100, h: 30 }, page: 1 },
+    { text: 'melakukan', confidence: 1, bbox: { x: 0, y: 100, w: 100, h: 20 }, page: 1 },
+  ];
+  const lines = lineMerger.merge(blocks);
+  assert.strictEqual(lines.length, 4);
+  assert.strictEqual(lines[0].text, 'BAB II');
+  assert.strictEqual(lines[1].text, 'Pasal 1');
+  assert.strictEqual(lines[2].text, 'Setiap orang yang');
+  assert.strictEqual(lines[3].text, 'melakukan');
+});
+
+test('documentTreeBuilder: preambul menggabung dipecah jadi komponen', async () => {
+  const lines = [
+    new Line({
+      text: 'Menimbang : a. bahwa X; b. bahwa Y; Mengingat : 1. UU; MEMUTUSKAN : Menetapkan : hal',
+      order: 0,
+    }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const types = tree.children.map((c) => c.type);
+  assert.ok(types.includes('menimbang'), 'Menimbang terdeteksi');
+  assert.ok(types.includes('mengingat'), 'Mengingat terdeteksi');
+  assert.ok(types.includes('memutuskan'), 'MEMUTUSKAN terdeteksi');
+  assert.ok(types.includes('menetapkan'), 'Menetapkan terdeteksi');
+  assert.ok(types.includes('huruf'), 'isi a. terdeteksi');
+});
+
+test('documentTreeBuilder: kalimat biasa tidak terpecah preambul', () => {
+  assert.strictEqual(documentTreeBuilder._splitPreambleText('dengan menimbang : bahwa hal ini').length, 1);
+  assert.strictEqual(documentTreeBuilder._splitPreambleText('Peraturan ini menetapkan : hal-hal').length, 1);
+});
+
+test('documentTreeBuilder: Pasal dengan isi menempel dipisah judul/body', () => {
+  const node = documentTreeBuilder._classifyParagraph([
+    new Line({ text: 'Pasal 1 Setiap orang yang dengan sengaja', order: 0 }),
+  ]);
+  assert.strictEqual(node.title, 'Pasal 1');
+  assert.strictEqual(node.text, 'Setiap orang yang dengan sengaja');
+});
+
+test('markdownGenerator: isi Pasal dan preambul dirender (tidak hilang)', async () => {
+  const lines = [
+    new Line({ text: 'PERATURAN BUPATI DAIRI NOMOR 1 TAHUN 2020 TENTANG PENYELENGGARAAN', order: 0 }),
+    new Line({ text: 'Menimbang : a. bahwa X; b. bahwa Y', order: 1 }),
+    new Line({ text: 'Mengingat : 1. UU Nomor 23 Tahun 2014', order: 2 }),
+    new Line({ text: 'MEMUTUSKAN : Menetapkan : Peraturan tentang hal', order: 3 }),
+    new Line({ text: 'Pasal 1', order: 4 }),
+    new Line({ text: '(1) Setiap orang wajib', order: 5 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const parsed = legalParser.parse(tree);
+  const md = markdownGenerator.generate(parsed);
+  assert.ok(md.includes('**Menimbang:**'), 'heading Menimbang');
+  assert.ok(md.includes('a. bahwa X'), 'isi Menimbang a.');
+  assert.ok(md.includes('b. bahwa Y'), 'isi Menimbang b.');
+  assert.ok(md.includes('**Mengingat:**'), 'heading Mengingat');
+  assert.ok(md.includes('1. UU Nomor 23 Tahun 2014'), 'isi Mengingat 1.');
+  assert.ok(md.includes('**MEMUTUSKAN:**'), 'heading MEMUTUSKAN');
+  assert.ok(md.includes('**Menetapkan:**'), 'heading Menetapkan');
+  assert.ok(md.includes('Peraturan tentang hal'), 'isi Menetapkan');
+  assert.ok(md.includes('**Pasal 1**'), 'heading Pasal 1');
+  assert.ok(md.includes('(1) Setiap orang wajib'), 'ayat (1)');
+});
+
+test('textCleaner legacy: chrome dibuang sebelum join kalimat, kata terpecah digabung', () => {
+  const out = cleanText('BAB I\n- 3 -\nDala m hal\nSALINAN E3\nPasal 1\n\nDitetapkan di Jakarta');
+  assert.ok(!out.includes('- 3 -'), 'nomor halaman hilang');
+  assert.ok(!out.includes('SALINAN'), 'cap SALINAN hilang');
+  assert.ok(out.includes('Dalam hal'), 'kata terpecah digabung');
+  assert.ok(out.includes('BAB I'), 'konten tetap');
+});
+
+test('textCleaner legacy: tahun & angka sah dipertahankan', () => {
+  const out = cleanText('Tahun 2020\nPasal 1\n');
+  assert.ok(out.includes('2020'), 'tahun tidak ikut terhapus');
+  assert.ok(out.includes('Pasal 1'), 'Pasal tetap');
+});
+
+// ========================================================================
+// 14.6 v30.1 — typo OCR, footer chrome, fallback tabel, limit PaddleX
+// ========================================================================
+console.log('\n=== 14.6 v30.1 (ocrTypos + chrome footer + tabel + PaddleX limit) ===');
+
+const { fixOcrTypos } = require('./src/utils/ocrTypos');
+
+test('ocrTypos: token map typo OCR dikoreksi (case-preserving)', () => {
+  assert.strictEqual(fixOcrTypos('BAE III'), 'BAB III');
+  assert.strictEqual(fixOcrTypos('Fasal 5'), 'Pasal 5');
+  assert.strictEqual(fixOcrTypos('DAIEI'), 'DAIRI');
+  assert.strictEqual(fixOcrTypos('YANCMAHA ESA'), 'YANG MAHA ESA');
+  assert.strictEqual(fixOcrTypos('avat (2)'), 'ayat (2)');
+  assert.strictEqual(fixOcrTypos('Nonor 8'), 'Nomor 8');
+  assert.strictEqual(fixOcrTypos('Nornor 8'), 'Nomor 8');
+  assert.strictEqual(fixOcrTypos('kepaca Kepala'), 'kepada Kepala');
+  assert.strictEqual(fixOcrTypos('cengan demikian'), 'dengan demikian');
+  assert.strictEqual(fixOcrTypos('Euvati Dairi'), 'Bupati Dairi');
+  assert.strictEqual(fixOcrTypos('MEMUTUISKAN :'), 'MEMUTUSKAN :');
+});
+
+test('ocrTypos: aturan generik (kolon dalam kata, ¿, l+konsonan+dict, nyva)', () => {
+  assert.strictEqual(fixOcrTypos('se:besar-besarnyva'), 'sebesar-besarnya');
+  assert.strictEqual(fixOcrTypos('¿udalah'), 'sudah');
+  assert.strictEqual(fixOcrTypos('lkegiatan'), 'kegiatan');
+  assert.strictEqual(fixOcrTypos('Lkegiatan'), 'Kegiatan');
+  assert.strictEqual(fixOcrTypos('besarnyva'), 'besarnya');
+});
+
+test('ocrTypos: kata sah tidak tersentuh', () => {
+  assert.strictEqual(fixOcrTypos('BAB I Pasal 5 dengan sudah'), 'BAB I Pasal 5 dengan sudah');
+  assert.strictEqual(fixOcrTypos('a.n. NIP. lampiran lucu besarnya'), 'a.n. NIP. lampiran lucu besarnya');
+  assert.strictEqual(fixOcrTypos('12:30 jatuh tempo'), '12:30 jatuh tempo');
+});
+
+test('cleanLineText: typo OCR dikoreksi di pipeline cleaning', () => {
+  assert.strictEqual(cleanLineText('BAE III Fasal 5'), 'BAB III Pasal 5');
+  assert.strictEqual(cleanLineText('se:besar-besarnyva'), 'sebesar-besarnya');
+  assert.strictEqual(cleanLineText('Bupati Dairi menetapkan lkegiatan'), 'Bupati Dairi menetapkan kegiatan');
+});
+
+test('wordFixer: kata fiskal/daerah baru digabung, frasa sah tetap utuh', () => {
+  assert.strictEqual(mergeSplitWords('pengalokas ian'), 'pengalokasian');
+  assert.strictEqual(mergeSplitWords('bupa ti'), 'bupati');
+  assert.strictEqual(mergeSplitWords('daer ah'), 'daerah');
+  assert.strictEqual(mergeSplitWords('penyalur an'), 'penyaluran');
+  assert.strictEqual(mergeSplitWords('mengalokas ikan'), 'mengalokasikan');
+  assert.strictEqual(mergeSplitWords('pa jak retribu si hu kum alo kasi'), 'pajak retribusi hukum alokasi');
+  assert.strictEqual(mergeSplitWords('peraturan daerah'), 'peraturan daerah');
+});
+
+test('filterPageChrome: footer sah (NIP, ttd., Salinan sesuai, KEPALA BAGIAN HUKUM) dibuang', () => {
+  const lines = [
+    { text: 'Pasal 1', page: 1 },
+    { text: 'KEPALA BAGIAN HUKUM', page: 1 },
+    { text: 'ttd.', page: 1 },
+    { text: 'NIP. 19701022 1998031006', page: 1 },
+    { text: 'Pasal 2', page: 2 },
+    { text: 'KEPALA BAGIAN HUKUM', page: 2 },
+    { text: 'ttd.', page: 2 },
+    { text: 'Salinan sesuai dengan aslinya', page: 2 },
+  ];
+  const out = filterPageChrome(lines);
+  assert.deepStrictEqual(
+    out.map((l) => l.text),
+    ['Pasal 1', 'Pasal 2'],
+  );
+});
+
+test('filterPageChrome: duplikat heading preambul (ghost layer) dibuang', () => {
+  const lines = [
+    { text: 'Menimbang :', page: 1 },
+    { text: 'a. bahwa X', page: 1 },
+    { text: 'Menimbang :', page: 1 },
+    { text: 'b. bahwa Y', page: 1 },
+    { text: 'Mengingat :', page: 2 },
+    { text: '1. UU Nomor 23 Tahun 2014', page: 2 },
+    { text: 'Mengingat :', page: 2 },
+  ];
+  const out = filterPageChrome(lines);
+  assert.deepStrictEqual(
+    out.map((l) => l.text),
+    ['Menimbang :', 'a. bahwa X', 'b. bahwa Y', 'Mengingat :', '1. UU Nomor 23 Tahun 2014'],
+  );
+});
+
+test('filterPageChrome: a.n. Kepala Bagian Hukum (konten) tidak dibuang', () => {
+  const lines = [
+    { text: 'a.n. Kepala Bagian Hukum', page: 1 },
+    { text: 'Salinan sesuai dengan aslinya', page: 2 },
+  ];
+  const out = filterPageChrome(lines);
+  assert.deepStrictEqual(
+    out.map((l) => l.text),
+    ['a.n. Kepala Bagian Hukum'],
+  );
+});
+
+test('textCleaner legacy: footer NIP/ttd & duplikat Menimbang dibuang, typo dikoreksi', () => {
+  const out = cleanText(
+    'KEPALA BAGIAN HUKUM\nMenimbang :\na. bahwa X\nMenimbang :\nb. bahwa Y\nMengingat :\n1. UU\nNIP. 19701022 1998031006\nttd.\n',
+  );
+  assert.ok(!out.includes('NIP.'), 'NIP hilang');
+  assert.ok(!out.includes('ttd.'), 'ttd hilang');
+  assert.ok(!out.includes('KEPALA BAGIAN HUKUM'), 'KEPALA BAGIAN HUKUM hilang');
+  assert.strictEqual((out.match(/Menimbang/g) || []).length, 1, 'duplikat Menimbang dibuang');
+  assert.ok(out.includes('a. bahwa X'), 'konten a. tetap');
+  assert.ok(out.includes('b. bahwa Y'), 'konten b. tetap');
+});
+
+test('textCleaner legacy: typo BAE/Fasal/avat dikoreksi', () => {
+  const out = cleanText('BAE III\nFasal 5\navat (2)');
+  assert.ok(out.includes('BAB III'), 'BAE -> BAB');
+  assert.ok(out.includes('Pasal 5'), 'Fasal -> Pasal');
+  assert.ok(out.includes('ayat (2)'), 'avat -> ayat');
+});
+
+test('tableFormatter: tabel korup (baris 1-sel di samping 5-sel) -> plain text per baris', () => {
+  const html =
+    '<table><tr><td>NO</td><td>URAIAN</td><td>JUMLAH</td><td>KET</td><td>SUMBER</td></tr>' +
+    '<tr><td>1</td><td>Belanja pegawai</td><td>100</td><td>lunas</td><td>APBD</td></tr>' +
+    '<tr><td colspan="5">JUMLAH</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(!result.includes('+---'), 'grid korup tidak dipakai');
+  assert.ok(result.includes('NO | URAIAN | JUMLAH | KET | SUMBER'), 'sel digabung plain');
+  assert.ok(result.includes('Belanja pegawai'), 'info tetap ada');
+  assert.ok(result.includes('JUMLAH'), 'sel colspan tetap ada');
+});
+
+test('tableFormatter: tabel bersih tetap pakai grid ASCII', () => {
+  const html = '<table><tr><th>NO</th><th>URAIAN</th></tr><tr><td>1</td><td>Belanja</td></tr></table>';
+  const result = formatTableHtmlToText(html);
+  assert.ok(result.includes('+'), 'grid dipertahankan');
+  assert.ok(result.includes('| NO |'), 'sel header dipertahankan');
+});
+
+test('config: TABLE_AWARE_MAX_PADDLEX_PAGES default 2, nilai 0 dihormati', () => {
+  assert.strictEqual(config.tableAware.maxPaddlexPages, 2, 'default 2');
+  const old = process.env.TABLE_AWARE_MAX_PADDLEX_PAGES;
+  process.env.TABLE_AWARE_MAX_PADDLEX_PAGES = '0';
+  delete require.cache[require.resolve('./src/config/index.js')];
+  const cfg0 = require('./src/config/index.js');
+  assert.strictEqual(cfg0.tableAware.maxPaddlexPages, 0, '0 = PaddleX nonaktif');
+  process.env.TABLE_AWARE_MAX_PADDLEX_PAGES = old;
+  delete require.cache[require.resolve('./src/config/index.js')];
+  require('./src/config/index.js');
 });
 
 // ========================================================================
