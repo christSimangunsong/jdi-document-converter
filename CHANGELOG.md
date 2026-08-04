@@ -5,6 +5,32 @@
 
 ---
 
+## Changelog — 2026-08-04 (v29.5)
+
+### ringkasan
+**Database menjadi sumber utama penyimpanan hasil konversi; folder `output/` hanya cache kerja.** Sebelumnya server selalu menulis file `.txt` permanen ke `output/` (server.js `processBuffer`) padahal teks yang disimpan user juga masuk DB (`conversion_activities.output_text`) — redundansi dua sumber kebenaran (user: "percuma kita punya database jika server masih menyimpan file output"). V29.5: file tetap ditulis sebagai cache sesi (agar tombol "Download .txt" jalan sebelum di-save), lalu **dihapus otomatis saat disimpan ke DB**, ditambah **cleanup berkala** (file yang sudah di DB / stale > 30 hari). Download yang tersimpan di DB tetap bisa diunduh — route fallback membaca `output_text`.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `server.js` | `GET /download/:file` hanya baca file dari `outputDir` (404 jika tidak ada); `POST /api/activities/save` hanya simpan teks ke DB; tanpa cleanup; **branch reconstruction TIDAK menulis file .txt** (`outputFile` selalu kosong — bug pre-existing); progress SSE hanya `{pct}` | (1) download route: file → **fallback DB** via `getByFileName` (`output_text` dikirim sebagai `.txt`, `Content-Disposition filename*=UTF-8''`); (2) save route: setelah insert+teks sukses → **hapus file cache** `output/${file_name}.txt` (log `[Save] File cache dihapus`); (3) **`cleanupOutputDir()`** di startup + `setInterval` (default 6 jam): hapus `*.txt`/`*.md` yang sudah tersimpan di DB atau berumur > `OUTPUT_CLEANUP_MAX_AGE_DAYS`; file < 10 mnt dilewati (anti-race konversi aktif); `*.png`/debug tidak disentuh; (4) **branch reconstruction kini menulis cache file** `output/${fileName}.txt` + cek KOSONG (paritas dengan branch legacy); (5) **progress SSE detail**: `processBuffer` mengirim objek `{pct, phase, page, totalPages}`, route batch menambah `fileIndex/totalFiles/fileName` → UI menampilkan fase + file i/n + halaman |
+| `public/index.html` | `showLoading(msg, pct)` hanya persen; `done` langsung `hideLoading()` | `showLoading(p)` objek progress (judul = fase, sub = `File i/n — nama (halaman x/y) — %`); `doneLoading(total)` menampilkan **"Selesai — N file selesai diproses"** selama 4 dtk (tidak lagi tiba-tiba hilang → user tahu batch selesai) |
+| `src/services/activityLogger.js` | — | + `getByFileName(fileName)` — `SELECT id, file_name, output_text, text_uploaded WHERE file_name = ? AND output_text IS NOT NULL ORDER BY id DESC LIMIT 1` (dipakai download fallback + cleanup) |
+| `src/config/index.js` | — | + section `outputCleanup` (`maxAgeDays` default 30, `intervalMs` default 6 jam) |
+| `.env` | — | + `OUTPUT_CLEANUP_MAX_AGE_DAYS=30`, `OUTPUT_CLEANUP_INTERVAL_MS=21600000` |
+| `docker-compose.yml` | — | + env `OUTPUT_CLEANUP_MAX_AGE_DAYS`/`OUTPUT_CLEANUP_INTERVAL_MS` (default sama) |
+
+### detail
+
+**Alur baru**: konversi BERHASIL → `.txt` ditulis (cache) → user klik "Simpan ke Database" → teks masuk DB + file cache **dihapus** → tombol "Download .txt" tetap jalan karena server membaca dari DB (`getByFileName`). File yang TIDAK pernah disimpan dibiarkan sampai 30 hari lalu dibersihkan berkala.
+
+**Verifikasi e2e (2026-08-04, PDF uji 1 hlm)**: (1) upload → BERHASIL, `outputFile=e2e_uji_v295.txt` ada di folder; (2) `POST /api/activities/save` → `{success, activityId:50}` + log `[Save] File cache dihapus` + file HILANG dari folder; (3) `GET /download/e2e_uji_v295.txt` → **200 dari DB** (isi = teks yang disimpan, bukan file); (4) startup cleanup menghapus 4 file uji: 3 yang sudah tersimpan di DB + 1 stale > 30 hari, file baru < 10 mnt dilewati (guard anti-race bekerja); (5) `DELETE /api/activities/50` bersih. `npm test` 187 passed, lint 0 error.
+
+**Catatan**: (1) hasil yang tidak disimpan ke DB dan berumur > 30 hari akan terhapus dari folder (tidak bisa di-download lagi) — perilaku disengaja; (2) isi DB (textarea yang diedit) adalah versi otoritatif setelah disimpan — file cache bisa berbeda jika teks diedit sebelum save; (3) `GET /download/:file` tetap mendukung `?file=x.txt` lama (file lebih diutamakan dari DB); (4) **monitoring**: logger sudah dual-write (winston console + `logs/app.log`/`error.log` rotasi 5 MB×5) — tidak perlu redirect stdout; cukup baca `logs/app.log`; (5) **pengalaman batch**: progress kini menampilkan fase aktif ("OCR halaman 21/36", "Membangun struktur dokumen") + `File 3/15 — <nama>` sehingga user tahu batch masih berjalan, dan "Selesai" 4 dtk di akhir.
+
+---
+
 ## Changelog — 2026-08-04 (v29.4)
 
 ### ringkasan

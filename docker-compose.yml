@@ -34,6 +34,8 @@ services:
       - TABLE_AWARE_ENABLED=${TABLE_AWARE_ENABLED:-true}
       - TABLE_AWARE_SERVICE_URL=http://table-ocr:5003
       - TABLE_AWARE_TIMEOUT=${TABLE_AWARE_TIMEOUT:-720000}
+      - OUTPUT_CLEANUP_MAX_AGE_DAYS=${OUTPUT_CLEANUP_MAX_AGE_DAYS:-30}
+      - OUTPUT_CLEANUP_INTERVAL_MS=${OUTPUT_CLEANUP_INTERVAL_MS:-21600000}
     depends_on:
       db:
         condition: service_healthy

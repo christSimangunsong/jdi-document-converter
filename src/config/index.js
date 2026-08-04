@@ -83,6 +83,10 @@ const config = {
     enabled: process.env.REVIEW_ENABLED !== 'false' && process.env.REVIEW_ENABLED !== '0',
     maxIssues: parseInt(process.env.REVIEW_MAX_ISSUES, 10) || 50,
   },
+  outputCleanup: {
+    maxAgeDays: parseInt(process.env.OUTPUT_CLEANUP_MAX_AGE_DAYS, 10) || 30,
+    intervalMs: parseInt(process.env.OUTPUT_CLEANUP_INTERVAL_MS, 10) || 6 * 60 * 60 * 1000,
+  },
 };
 
 module.exports = config;

@@ -950,10 +950,32 @@
       });
 
       function showLoading(msg, pct) {
-        $('progressTitle').textContent = msg;
-        $('progressSub').textContent = `Memproses... ${Math.round(pct)}%`;
-        $('progressFill').style.width = pct + '%';
+        let phase = msg;
+        let progressPct = pct;
+        let sub = '';
+        if (typeof msg === 'object' && msg !== null) {
+          const p = msg;
+          phase = p.phase || 'Memproses...';
+          progressPct = p.pct || 0;
+          const loc = p.fileIndex ? `File ${p.fileIndex}/${p.totalFiles}` : '';
+          const name = p.fileName ? ` — ${p.fileName}` : '';
+          const page = p.page ? ` (halaman ${p.page}/${p.totalPages})` : '';
+          sub = `${loc}${name}${page} — ${Math.round(progressPct)}%`;
+        } else {
+          sub = `Memproses... ${Math.round(pct)}%`;
+        }
+        $('progressTitle').textContent = phase;
+        $('progressSub').textContent = sub;
+        $('progressFill').style.width = (progressPct || 0) + '%';
         $('loadingBar').classList.add('show');
+      }
+
+      function doneLoading(total) {
+        $('progressTitle').textContent = 'Selesai';
+        $('progressSub').textContent = `${total} file selesai diproses — semua hasil tersedia di bawah`;
+        $('progressFill').style.width = '100%';
+        $('loadingBar').classList.add('show');
+        setTimeout(hideLoading, 4000);
       }
 
       function hideLoading() {
@@ -1198,10 +1220,10 @@
 
           let idx = 0;
           await readSSEStream(res, {
-            progress: (p) => showLoading('Memproses URL...', p.pct),
+            progress: (p) => showLoading(p),
             result: (r) => addResultItem(r, idx++),
             error: (e) => addResultItem(e, idx++),
-            done: () => hideLoading(),
+            done: (d) => doneLoading(d && d.total != null ? d.total : resultsStore.length),
           });
         } catch (e) {
           hideLoading();
@@ -1238,10 +1260,10 @@
 
           let idx = 0;
           await readSSEStream(res, {
-            progress: (p) => showLoading('Memproses file...', p.pct),
+            progress: (p) => showLoading(p),
             result: (r) => addResultItem(r, idx++),
             error: (e) => addResultItem(e, idx++),
-            done: () => hideLoading(),
+            done: (d) => doneLoading(d && d.total != null ? d.total : resultsStore.length),
           });
         } catch (e) {
           hideLoading();

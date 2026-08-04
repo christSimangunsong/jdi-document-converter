@@ -171,6 +171,24 @@ async function getActivityById(id) {
   }
 }
 
+async function getByFileName(fileName) {
+  try {
+    const p = await getPool();
+    const [rows] = await p.execute(
+      `SELECT id, file_name, output_text, text_uploaded
+       FROM conversion_activities
+       WHERE file_name = ? AND output_text IS NOT NULL
+       ORDER BY id DESC
+       LIMIT 1`,
+      [fileName],
+    );
+    return rows.length > 0 ? rows[0] : null;
+  } catch (error) {
+    logger.error(`Gagal ambil aktivitas oleh nama file: ${error?.message || error || 'Unknown error'}`);
+    return null;
+  }
+}
+
 async function getStats() {
   try {
     const p = await getPool();
@@ -330,6 +348,7 @@ module.exports = {
   uploadTextToDb,
   getActivities,
   getActivityById,
+  getByFileName,
   getStats,
   checkDuplicateByUrl,
   checkDuplicateByHash,

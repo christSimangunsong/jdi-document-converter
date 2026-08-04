@@ -186,34 +186,41 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
 
   const startTime = Date.now();
 
+  // Progress dengan fase (nama fase + halaman) — dikonsumsi batch SSE route.
+  const progress = (pct, phase, extra) => {
+    if (onProgress) onProgress({ pct, phase, ...extra });
+  };
+
   try {
     if (pdfBuffer.length === 0) {
       result.status = 'KOSONG';
       result.errorMessage = 'File PDF kosong (0 byte)';
       logger.warn(`  File kosong: ${fileName}`);
-      if (onProgress) onProgress(1);
+      if (onProgress) progress(1, 'Selesai');
     } else {
       const detection = await detectPdfType(pdfBuffer);
       result.type = detection.type;
       result.pageCount = detection.pageCount;
-      if (onProgress) onProgress(0.05);
+      if (onProgress) progress(0.05, 'Analisis PDF');
 
       if (config.reconstruction && config.reconstruction.enabled) {
         let ocrBlocks = [];
         if (detection.type !== 'TEXT') {
           const { images, pageCount: imgPageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
           result.pageCount = imgPageCount;
-          if (onProgress) onProgress(0.1);
+          if (onProgress) progress(0.1, 'Render halaman PDF');
           ocrBlocks = await performOcrBlocks(images, (page, total) => {
-            if (onProgress) onProgress(0.1 + (page / total) * 0.4);
+            if (onProgress) {
+              progress(0.1 + (page / total) * 0.4, `OCR halaman ${page}/${total}`, { page, totalPages: total });
+            }
           });
           result.ocrStatus = 'BERHASIL';
         }
-        if (onProgress) onProgress(0.55);
+        if (onProgress) progress(0.55, 'Membangun struktur dokumen');
 
         const doc = await runReconstruction(pdfBuffer, ocrBlocks, {
-          onProgress: (pct, _msg) => {
-            if (onProgress) onProgress(0.55 + pct * 0.4);
+          onProgress: (pct, msg) => {
+            if (onProgress) progress(0.55 + pct * 0.4, msg || 'Reconstruction');
           },
           ocrEngine: config.ocr ? config.ocr.engine : 'paddle',
         });
@@ -234,21 +241,34 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
           review: reviewData,
         };
 
-        if (onProgress) onProgress(0.95);
+        // Tulis cache file .txt (DB = sumber utama v29.5; file dihapus saat save)
+        if (!result.text.trim()) {
+          result.status = 'KOSONG';
+          result.errorMessage = 'Hasil konversi kosong — file mungkin rusak atau tidak terbaca';
+        } else {
+          const outputFileName = `${fileName}.txt`;
+          const outputPath = path.join(config.outputDir, outputFileName);
+          await fs.writeFile(outputPath, result.text, 'utf-8');
+          result.outputFile = outputFileName;
+        }
+
+        if (onProgress) progress(0.95, 'Menyiapkan output');
       } else {
         if (detection.type === 'TEXT') {
           const extracted = await extractText(pdfBuffer);
           result.pageCount = extracted.pageCount;
           result.ocrStatus = 'TIDAK DIPERLUKAN';
           result.text = extracted.text;
-          if (onProgress) onProgress(0.85);
+          if (onProgress) progress(0.85, 'Ekstrak teks digital');
         } else {
           const { images, pageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
           result.pageCount = pageCount;
-          if (onProgress) onProgress(0.15);
+          if (onProgress) progress(0.15, 'Render halaman PDF');
 
           const ocrResults = await performStructuredOcr(images, (page, total) => {
-            if (onProgress) onProgress(0.15 + (page / total) * 0.7);
+            if (onProgress) {
+              progress(0.15 + (page / total) * 0.7, `OCR halaman ${page}/${total}`, { page, totalPages: total });
+            }
           });
           result.text = ocrResults.join('\n\n');
           result.ocrStatus = 'BERHASIL';
@@ -277,7 +297,7 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
           result.outputFile = outputFileName;
         }
 
-        if (onProgress) onProgress(0.95);
+        if (onProgress) progress(0.95, 'Menyiapkan output');
       }
     }
   } catch (error) {
@@ -287,7 +307,7 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
   }
 
   result.durasi = ((Date.now() - startTime) / 1000).toFixed(1) + ' dtk';
-  if (onProgress) onProgress(1);
+  if (onProgress) progress(1, 'Selesai');
 
   return result;
 }
@@ -361,16 +381,27 @@ app.post('/process-urls', async (req, res) => {
       const basePct = (i / n) * 100;
       const filePct = 100 / n;
 
-      send('progress', { pct: Math.round(basePct) });
       const fileName = extractFileNameFromUrl(url);
+      const sendProgress = (pct, phase, extra) => {
+        send('progress', {
+          pct,
+          fileIndex: i + 1,
+          totalFiles: n,
+          fileName,
+          phase,
+          ...extra,
+        });
+      };
+
+      sendProgress(Math.round(basePct), 'Menunggu antrian');
 
       try {
         logger.info(`[WEB Batch ${i + 1}/${n}] Memproses URL: ${url}`);
         const pdfBuffer = await downloadPdf(url);
-        send('progress', { pct: Math.round(basePct + filePct * 0.1) });
+        sendProgress(Math.round(basePct + filePct * 0.1), 'Mengunduh PDF');
 
         const fileHash = computeHash(pdfBuffer);
-        send('progress', { pct: Math.round(basePct + filePct * 0.15) });
+        sendProgress(Math.round(basePct + filePct * 0.15), 'Memeriksa file');
 
         const result = await processBuffer(
           pdfBuffer,
@@ -382,17 +413,24 @@ app.post('/process-urls', async (req, res) => {
             fileHash,
           },
           (inner) => {
-            const pct = basePct + filePct * (0.15 + inner * 0.85);
-            send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
+            const num = typeof inner === 'number' ? inner : inner.pct;
+            const pct = basePct + filePct * (0.15 + num * 0.85);
+            sendProgress(
+              Math.min(Math.round(pct), Math.round(basePct + filePct)),
+              typeof inner === 'object' && inner.phase ? inner.phase : undefined,
+              typeof inner === 'object'
+                ? { page: inner.page, totalPages: inner.totalPages }
+                : {},
+            );
           },
         );
         result.index = i;
-        send('progress', { pct: Math.round(basePct + filePct) });
+        sendProgress(Math.round(basePct + filePct), 'Menyimpan hasil');
         send('result', result);
         logger.info(`[WEB Batch ${i + 1}/${n}] Selesai: ${url}`);
       } catch (error) {
         logger.error(`[WEB Batch ${i + 1}/${n}] Error: ${url} - ${error.message}`);
-        send('progress', { pct: Math.round(basePct + filePct) });
+        sendProgress(Math.round(basePct + filePct), 'Gagal');
         send('error', { index: i, url, status: 'GAGAL', error: error.message, durasi: '0.0 dtk' });
       }
     }
@@ -476,14 +514,25 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
       const basePct = (i / n) * 100;
       const filePct = 100 / n;
 
-      send('progress', { pct: Math.round(basePct) });
+      const sendProgress = (pct, phase, extra) => {
+        send('progress', {
+          pct,
+          fileIndex: i + 1,
+          totalFiles: n,
+          fileName,
+          phase,
+          ...extra,
+        });
+      };
+
+      sendProgress(Math.round(basePct), 'Menunggu antrian');
 
       try {
         const pdfBuffer = await fs.readFile(file.path);
-        send('progress', { pct: Math.round(basePct + filePct * 0.1) });
+        sendProgress(Math.round(basePct + filePct * 0.1), 'Membaca file upload');
 
         const fileHash = computeHash(pdfBuffer);
-        send('progress', { pct: Math.round(basePct + filePct * 0.15) });
+        sendProgress(Math.round(basePct + filePct * 0.15), 'Memeriksa file');
 
         logger.info(`[WEB Batch ${i + 1}/${n}] Memproses file: ${file.originalname}`);
         const result = await processBuffer(
@@ -495,18 +544,25 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
             fileHash,
           },
           (inner) => {
-            const pct = basePct + filePct * (0.15 + inner * 0.85);
-            send('progress', { pct: Math.min(Math.round(pct), Math.round(basePct + filePct)) });
+            const num = typeof inner === 'number' ? inner : inner.pct;
+            const pct = basePct + filePct * (0.15 + num * 0.85);
+            sendProgress(
+              Math.min(Math.round(pct), Math.round(basePct + filePct)),
+              typeof inner === 'object' && inner.phase ? inner.phase : undefined,
+              typeof inner === 'object'
+                ? { page: inner.page, totalPages: inner.totalPages }
+                : {},
+            );
           },
         );
         result.index = i;
         result.originalName = file.originalname;
-        send('progress', { pct: Math.round(basePct + filePct) });
+        sendProgress(Math.round(basePct + filePct), 'Menyimpan hasil');
         send('result', result);
         logger.info(`[WEB Batch ${i + 1}/${n}] Selesai: ${file.originalname}`);
       } catch (error) {
         logger.error(`[WEB Batch ${i + 1}/${n}] Error: ${file.originalname} - ${error.message}`);
-        send('progress', { pct: Math.round(basePct + filePct) });
+        sendProgress(Math.round(basePct + filePct), 'Gagal');
         send('error', {
           index: i,
           originalName: file.originalname,
@@ -530,12 +586,62 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Pembersihan cache output/ — DB adalah sumber utama (v29.5), file hanya
+// cache kerja: hapus file yang sudah tersimpan di DB + file stale tua.
+// ---------------------------------------------------------------------------
+async function cleanupOutputDir() {
+  try {
+    await fs.ensureDir(config.outputDir);
+    const files = await fs.readdir(config.outputDir);
+    const maxAgeMs = config.outputCleanup.maxAgeDays * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let removed = 0;
+
+    for (const name of files) {
+      if (!/\.(txt|md)$/i.test(name)) continue;
+      const filePath = path.join(config.outputDir, name);
+      try {
+        const stat = await fs.stat(filePath);
+        // File yang baru ditulis (<10 mnt) dilewati — hindari race saat konversi aktif
+        if (now - stat.mtimeMs < 10 * 60 * 1000) continue;
+
+        const base = name.replace(/\.(txt|md)$/i, '');
+        const inDb = await activityLogger.getByFileName(base);
+        const tooOld = now - stat.mtimeMs > maxAgeMs;
+
+        if (inDb || tooOld) {
+          await fs.remove(filePath);
+          removed++;
+          logger.info(
+            `[Cleanup] Hapus ${name} (${inDb ? 'sudah tersimpan di DB' : `stale > ${config.outputCleanup.maxAgeDays} hari`})`,
+          );
+        }
+      } catch (err) {
+        logger.warn(`[Cleanup] Gagal proses ${name}: ${err.message}`);
+      }
+    }
+
+    if (removed > 0) logger.info(`[Cleanup] ${removed} file dibersihkan dari ${config.outputDir}`);
+  } catch (error) {
+    logger.error(`[Cleanup] Gagal cleanup output: ${error.message}`);
+  }
+}
+
 app.get('/download/:file', async (req, res) => {
   const filePath = path.join(config.outputDir, req.params.file);
-  if (!(await fs.pathExists(filePath))) {
-    return res.status(404).json({ error: 'File tidak ditemukan' });
+  if (await fs.pathExists(filePath)) {
+    return res.download(filePath);
   }
-  res.download(filePath);
+  // File cache sudah dihapus (tersimpan di DB) — layani dari database
+  const base = req.params.file.replace(/\.(txt|md)$/i, '');
+  const activity = await activityLogger.getByFileName(base);
+  if (activity && activity.output_text) {
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(req.params.file)}`);
+    return res.send(activity.output_text);
+  }
+  res.status(404).json({ error: 'File tidak ditemukan' });
 });
 
 app.get('/api/activities', async (req, res) => {
@@ -617,6 +723,15 @@ app.post('/api/activities/save', async (req, res) => {
 
     const ok = await activityLogger.uploadTextToDb(activityId, text || '');
     if (!ok) return res.status(500).json({ error: 'Gagal menyimpan teks' });
+
+    // File cache dihapus — data kini aman di DB (DB = sumber utama, v29.5)
+    if (file_name) {
+      const cachePath = path.join(config.outputDir, `${file_name}.txt`);
+      if (await fs.pathExists(cachePath)) {
+        await fs.remove(cachePath).catch(() => {});
+        logger.info(`[Save] File cache dihapus: ${file_name}.txt`);
+      }
+    }
 
     res.json({ success: true, activityId, message: 'Data berhasil disimpan ke database' });
   } catch (error) {
@@ -769,6 +884,9 @@ const PORT = process.env.PORT || 3000;
 async function start() {
   try {
     await activityLogger.initDatabase();
+    // Pembersihan cache output/ saat startup + berkala (DB = sumber utama)
+    await cleanupOutputDir();
+    setInterval(() => cleanupOutputDir().catch(() => {}), config.outputCleanup.intervalMs);
     // Sidecar di-start async (tidak memblokir server); fallback tetap aktif
     // jika gagal/offline.
     startSidecars().catch((err) => logger.warn(`Auto-start sidecar gagal: ${err.message}`));
