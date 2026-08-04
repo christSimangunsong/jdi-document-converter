@@ -5,6 +5,96 @@
 
 ---
 
+## Changelog — 2026-08-04 (v29.2)
+
+### ringkasan
+**Perbaikan kelambatan/stuck konversi (user: "kenapa lama sekali disini, jika memang ada bug perbaiki")**. Investigasi: UI macet ±12 mnt di fase table-aware — (1) sidecar table-ocr (5003) hang (worker mati 0% CPU) sementara server menunggu SATU request batch 6 halaman dengan timeout `TABLE_AWARE_TIMEOUT=3600000` (1 JAM); (2) `OSD_ENABLED=false` diabaikan `deskewRouter.js` — Tesseract OSD tetap dicoba tiap halaman (timeout 1500 ms + reset worker tesseract.js yang rusak); (3) halaman wired-grid tak dibatasi — PaddleX table_recognition ~9 mnt/halaman di CPU, batch 6 halaman bisa 30-60+ mnt.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/services/tableAwareService.js` | `analyzeTables()`: SATU POST batch `{pages:[N]}` timeout `config.tableAware.timeout` | **per-halaman**: loop POST `{pages:[1]}` per halaman, timeout per halaman di-cap `MAX_PAGE_TIMEOUT=300000` (5 mnt); gagal/timeout satu halaman → `warn` + `tables: []` → lanjut halaman lain (skip aman); hasil urut sesuai input (mapping `taResults[k]` di router tetap valid) |
+| `src/ocr/router.js` | `performOcrBlocks`: semua halaman wired → engine `paddlex` | **cap 2 PaddleX/dokumen**: counter `paddlexUsed`; halaman wired ke-3+ dialihkan ke `img2table` (~2 dtk) + log info — kualitas colspan 2 tabel pertama terjaga, batch ≤ ~20 mnt |
+| `src/ocr/deskewRouter.js` | `tryTesseractOsd()` tanpa cek config | gate `config.osd.enabled === false` → `return null` (sama seperti `orientationDetector.js`) — hemat ±30 dtk/dokumen + stop reset worker tesseract.js yang rusak tiap halaman |
+| `.env` | `TABLE_AWARE_TIMEOUT=3600000` | `TABLE_AWARE_TIMEOUT=300000` (5 mnt/halaman; kode juga cap di `MAX_PAGE_TIMEOUT`) |
+
+### detail
+
+**Verifikasi (runtime)**: dokumen scan 27 hlm via `/process-upload` — BERHASIL 77.1 dtk (test-tabel-sintetis, review 1.0, 0 issue, verify_output "SEMUA BERSIH"); log sidecar menunjukkan request **per-halaman** (`Halaman 1 gagal (img2table): cannot identify image file` — img2table gagal decode gambar tapi pipeline lanjut, skip aman, TIDAK hang). Run user (Perbub No 20/2020 compressed, 18 hlm) selesai normal 1063 dtk tanpa hang. `npm test` 182 passed 0 failed; lint 0 error (20 warning pre-existing).
+
+**Catatan operasional**: (1) bila sidecar 5003 hang lagi (CPU 0% saat ada request), kill prosesnya — server fallback otomatis dalam ≤5 mnt (per-page timeout) dan sidecar di-auto-spawn ulang via `SIDECAR_AUTOSTART`; (2) jalur TEXT (PDF digital dengan text layer) tidak memanggil table-aware — hanya jalur SCAN; (3) run sintetis sebelumnya sempat TIDAK menulis file markdown client karena fetch gagal di tengah restart server — ulangi request bila terjadi.
+
+---
+
+## Changelog — 2026-08-04 (v29.1)
+
+### ringkasan
+**Perbaikan generik output rapi untuk SEMUA file (instruksi user: "perbaiki kode programnya yang kurang, agar hasil outputnya rapi, dan tidak ada hasil simbol simbol yang aneh aneh")**. Tiga cacat kode diatasi: (1) `_rescueGarbageBlocks` hanya membersihkan blok yang GAGAL gate kualitas — blok yang lolos gate tapi ber-prefix fragmen mirror ("T E SALINAN L R 3 1 E 5. E BUPATI DAIRI...") bocor ke output; (2) aturan token garbage tidak mengenali run fragmen mirror (token bare 1 huruf/angka berurutan) dan tidak menormalkan angka menempel ("TAHUN2020"); (3) `_filterWholePageGarbageLines` membuang SELURUH baris yang mengandung CJK ("Pasal 1 国" ikut hilang) padahal cukup dibersihkan token-nya. Semua aturan token dipusatkan di modul baru `src/utils/garbageTokens.js` (satu sumber kebenaran, dipakai router OCR + output cleaner). Dedup tetap TIDAK dijalankan (arsip, pelajaran v28).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/utils/garbageTokens.js` (**baru**) | — | Modul bersama aturan token: `isOutputGarbageToken` (pindah dari outputCleaner), `isGarbageRunToken` (core 1 huruf/angka, bukan penanda daftar, bukan Rp), `isListMarker` ("a.", "b)", "(1)" — dilindungi), `cleanLineText`, `cleanGarbageText`, `normalizeGluedWordNumber` ("TAHUN2020" → "TAHUN 2020"), `fixInternalDots` ("SAL.INAN" → "SALINAN"; "Drs."/"a.n."/NIP. aman) |
+| `src/reconstruction/cleaner/outputCleaner.js` | aturan inline 100 baris | re-export dari `garbageTokens` — API publik sama (`isOutputGarbageToken`, `cleanLineText`, `cleanOutputText`, `cleanLines`, `countGarbageTokens`) |
+| `src/ocr/router.js` | `_rescueGarbageBlocks`: blok lolos gate dilewati tanpa pembersihan; `_filterWholePageGarbageLines`: baris ber-CJK dibuang utuh | (1) **pembersihan token TANPA SYARAT untuk SEMUA blok** sebelum cek `needsRescue` — fragmen mirror yang lolos gate ikut dirapikan; (2) `_filterWholePageGarbageLines`: token dibersihkan DULU (via `cleanLineText`), baru baris yang masih ber-CJK/readability < -0.5 dibuang — "Pasal 1 国" jadi "Pasal 1" (tidak hilang) |
+| `src/reconstruction/builder/documentTreeBuilder.js` | sel tabel disimpan mentah (`_parseTable` + jalur `detectTableFromLines`) | sel tabel di-`cleanLineText` saat build — teks tabel TIDAK lewat pipeline `cleanLines` (hanya `ctx.lines`), jadi garbage mirror dalam sel ("1 1 T T 1 1", 国) sebelumnya bocor ke markdown |
+| `scripts/verify_output.js` (**baru**) | — | Verifikasi output instan: hitung CJK/simbol/mirror-run/TAHUN-menempel/dot-internal dari file markdown tersimpan (tanpa OCR ulang); mode `--upload <pdf> <out>` sekaligus upload; exit 1 bila ada anomali |
+| `test.js` | 174 tests (7 cleaner) | **182 tests** (+8: run mirror "T E SALINAN L R 3 1 E 5. E" → "SALINAN BUPATI DAIRI", multi-line, TAHUN2020/NOMOR20, struktur sah "BAB I di daerah"/"huruf a ayat (1)"/"Rp 5.000"/"1. Undang-Undang Dasar 1945", run digit "kota kecil Kota 1 1" utuh, "1 1 T T 1 1" dihapus, dot internal, sel tabel dibersihkan) |
+
+### detail
+
+**Aturan run mirror**: run ≥2 token bare berurutan (core tepat 1 huruf/angka + punct tepi opsional) yang memuat ≥1 huruf tunggal → seluruh run dihapus. Aman untuk: "BAB I" (run 1 token), "huruf a", "Rp 5.000" ("Rp" 2 huruf bukan bare), "1. Undang-Undang" (penanda angka + kata panjang), "kota kecil Kota 1 1" (digit saja, tanpa huruf), "1: 3:" (tanpa huruf tunggal). Menghapus: "T E", "L R 3 1 E 5. E", "1 1 T T 1 1".
+
+**Verifikasi (runtime)**: dokumen 27 hlm scan (Perbub Desa Wisata 1/2020, dari `uploads/`) — status BERHASIL, **145 dtk** (vs ~270 dtk sebelum OSD off), markdown 28.950 char, **0 CJK, 0 simbol (∪/ν/¹)**, prefix mirror "T E ... L R 3 1 E 5. E" hilang (residu "L SAL.INAN T" → "L SALINAN T" setelah fixInternalDots), review skor 0.84. Dokumen 36 hlm digital (Perbub Sampah 2/2020): 36 dtk, **0 CJK, 0 simbol**, 0 TAHUN menempel, review skor 0.97. `npm test` 182 passed 0 failed; lint 0 error (20 warning pre-existing). Catatan: "Va_nod.ww:" di dokumen digital = artefak text layer PDF sumber (bukan OCR); residual "n Hu" kecil = sisa gabungan band repair halaman 1 scan.
+
+---
+
+## Changelog — 2026-08-03 (v28)
+
+### ringkasan
+**Pemulihan kelengkapan output (prioritas user: semua isi teks keluar, bukan estetika)**: `_dedupeConsecutive` (v27) terbukti membuang 31 dari 37 baris dokumen 36 hlm — karena tiap "line" pipeline = teks SATU HALAMAN PENUH, dan header hukum berulang di tiap halaman ("BUPATI DAIRI PROVINSI SUMATERA UTARA...", frasa pasal) membuat overlap token ≥60% antar halaman berurutan → markdown 58.738 → **11.946 char** (13 → 6 children). Fungsi dihapus total. Selain itu `repairTableBlocks` (v27) menerima canvas mentah/variant tanpa deskew → 0 region grid → repair mati senyap → tabel miring (hal 30/32) kehilangan blok region. Perbaikan: repair memakai cache rectified `_preprocessedCache[i][bestRetry]` + `rotateCanvas(bestAngle)` untuk halaman yang dikoreksi rotasi.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/reconstruction/builder/documentTreeBuilder.js` | `build()`: `_dedupeConsecutive(lines)` → `detectTableFromLines` + `_groupIntoParagraphs` | `lines` langsung (perilaku v26) — `_dedupeConsecutive` dihapus total (menghilangkan konten: baris = halaman penuh, header berulang → overlap ≥60% → 31/37 baris dibuang) |
+| `src/ocr/router.js` | `repairTableBlocks(bestImg, ...)` — bestImg = canvas mentah atau variant threshold+rotate TANPA deskew → 0 region → repair skip senyap; `outcome.image` = bestImg jelek → table-aware gagal di hal 30/32 | repair pakai `_preprocessedCache[i][bestRetry]` (gambar rectified: deskew+perspective+threshold) + `rotateCanvas(cached, bestAngle)` bila halaman dikoreksi rotasi → grid lurus → region terdeteksi (perilaku v26) dengan urutan v27 (setelah rotasi); saat repair berhasil `bestImg = repairImg` → table-aware/rescue dapat gambar berkualitas; + `logger.warn` bila 0 region pada halaman masih jelek (cegah regresi senyap) |
+| `test.js` | 170 tests | 167 tests — hapus 3 test `_dedupeConsecutive` |
+
+### detail
+
+**Bukti regresi v27 (log `08-03`)**: dokumen sama (Perbub Sampah 2/2020, 36 hlm) — run 08:58 (v26): 37 blocks/37 lines/**13 children**/**58.738 char**; run 10:02/10:30/10:55 (v27): 37 blocks/37 lines/**6 children**/**11.946 char**. Blok OCR identik — perbedaan murni di `documentTreeBuilder` karena dedup membuang halaman 2–36 (header + frasa hukum berulang → overlap ≥60%). `repairTableBlocks` di v27 juga tidak pernah jalan (0 baris "Repair tabel" di 3 run; v26: "1 region terdeteksi" tiap run).
+
+**Verifikasi**: `npm test` 167 passed 0 failed; lint 0 error. Setelah re-run: target markdown ≥50K char, "Repair tabel: 1 region terdeteksi" muncul, tabel hal 30/32 terisi, table-aware 21/29/34, tanpa simbol (SYMBOL_RE v27 dipertahankan).
+
+---
+
+### ringkasan
+**Empat perbaikan kualitas output berdasar evaluasi hasil `npm start` dokumen Perbub Dairi**: (1) kolom tabel halaman miring tersusun benar via OCR per-sel berbasis garis grid; (2) garbage non-Latin (Yunani ν, ∪, superscript ¹, "bo20202") kini terdeteksi gate; (3) loop re-OCR anti-simbol-terbalik dengan eskalasi skala (saran user); (4) dedup baris tabel lintas halaman. 14 unit test baru — total 170 passed.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/tableRegionOcr.js` | region OCR saja di `repairTableBlocks` | + `ocrGridCells()` — garis grid → rect per sel → `ocrTableCell` (2×) → `formatAsciiTable`; grid per-sel menang bila skor > region OCR (tanpa regresi), blok whole-page yang kontennya tercakup tabel dibuang |
+| `src/ocr/router.js` | `repairTableBlocks` dipanggil SEBELUM fallback rotasi (tidak berguna untuk halaman miring 90° — grid belum selaras) | repair dipindah SETELAH fallback rotasi (grid selaras di gambar ter-rectify) + loop baru `_reOcrWithScaleEscalation` — output masih mirror garbage (CJK/Yunani/∪/tanpa kata umum) atau belum accepted → upscale 1.5×→2×→2.5×→3× + OCR ulang, hasil dipakai hanya bila skor lebih baik |
+| `src/ocr/qualityMetrics.js` | `isGarbageWord`: CJK, digit, Latin 1-char | + simbol non-Latin ≥40% tanpa huruf Latin ("ν1"), simbol terisolasi ("∪", "ν"), superscript berulang ("u¹5nu1¹5aux"), digit-dominan dengan ≤2 huruf ("bo20202", kecuali Rp…/angka murni) |
+| `src/reconstruction/builder/documentTreeBuilder.js` | — | + `_dedupeConsecutive()` — baris berurutan lintas halaman dengan overlap token ≥60% (token ≥4 huruf, min 4 token) dibuang |
+| `test.js` | 156 tests | +14 tests (section 13) = 170 |
+
+### detail
+
+**OCR per-sel (P1)**: tabel halaman miring sebelumnya dibaca whole-page → sel antar kolom tercampur ("Dinas Lingkungan…Hidup" terbelah, header "TAHUN NOKEBIJAKAN…" berulang). Sekarang di halaman yang sudah di-rectify: `_detectHorizLines`/`_detectVertLines` → grid sel (min lebar 10px, min 2 kolom, min 2 baris) → tiap sel di-crop + 2× upscale + grayscale+threshold → OCR → `formatAsciiTable`. Gate skor `computeQualityScore` menjamin tidak ada regresi vs region OCR/whole-page.
+
+**Loop eskalasi skala (P5, saran user)**: `_hasMirrorGarbage(text)` = CJK | Yunani | ∪ | superscript | box-drawing | `commonWordRatio === 0`. Bila output masih mengandung itu atau belum accepted setelah retry+rotasi, gambar (orientasi terbaik yang diketahui) diperbesar bertahap 1.5×→3× dan di-OCR ulang sampai bersih; hasil terbaik selalu disimpan (tidak pernah menurunkan).
+
+**Verifikasi**: `npm test` 170 passed 0 failed (156 lama + 14 baru: isGarbageWord Yunani/∪/¹/bo20202 + false-positive protection 1.000/Rp1.500/tahun2020, `_hasMirrorGarbage`, no-op eskalasi, dedup lintas halaman), lint 0 error (20 warning lama, tidak dari sesi ini).
+
+---
+
 ## Changelog — 2026-08-03 (v26)
 
 ### ringkasan

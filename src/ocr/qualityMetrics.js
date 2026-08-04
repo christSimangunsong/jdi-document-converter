@@ -2,6 +2,14 @@ const config = require('../config');
 
 const CJK_RE = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/;
 
+// Simbol non-Latin hasil OCR arah salah/miring: Yunani (ν), matematika (∪),
+// superscript (¹), misc technical, box-drawing. Tidak pernah muncul dalam
+// teks hukum Indonesia yang sah. Arrows (2190-21FF) & dingbats (2600-27BF)
+// TIDAK termasuk — dipakai sah untuk ✓/☐/→ di sel tabel.
+const SYMBOL_RE = /[\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9\u00BC-\u00BE]/;
+const SYMBOL_RE_G = /[\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9\u00BC-\u00BE]/g;
+const SUPERSCRIPT_RE_G = /[\u2070-\u209F\u00B2\u00B3\u00B9]/g;
+
 function isGarbageWord(word) {
   const w = word || '';
   if (!w) return false;
@@ -13,6 +21,27 @@ function isGarbageWord(word) {
   if (!hasAlpha && digitRatio > 0.5 && w.length <= 3) return true;
   if (hasCjk && !digitRatio && w.length <= 4) return true;
   if (!hasAlpha && hasCjk && digitRatio > 0 && w.length <= 6) return true;
+
+  // Word sarat simbol non-Latin (≥40% karakter) tanpa huruf Latin sah —
+  // ciri OCR arah salah ("ν1", "∪ aua", "₁₅aux").
+  if (w.length >= 2) {
+    const symbolCount = (w.match(SYMBOL_RE_G) || []).length;
+    const hasRealLatin = /[a-zA-Z\u00C0-\u024F]/.test(w);
+    if (symbolCount / w.length >= 0.4 && !hasRealLatin) return true;
+    // Superscript berulang ("u¹5nu1¹5aux") — ¹ tidak pernah sah di kata.
+    if ((w.match(SUPERSCRIPT_RE_G) || []).length >= 2) return true;
+  } else if (SYMBOL_RE.test(w) && !/^[a-zA-Z\u00C0-\u024F]/.test(w)) {
+    // Simbol terisolasi 1 karakter ("∪", "ν", "¹") — sel tabel garbage.
+    return true;
+  }
+
+  // Digit-dominan dengan huruf ≤ 2 ("bo20202") — angka dengan 1-2 huruf
+  // terselip (bukan "Rp1.500" / "1.000" / "tahun2020" yang sah).
+  if (w.length >= 5 && /[a-zA-Z]/.test(w)) {
+    const digits = (w.match(/\d/g) || []).length;
+    const letters = (w.match(/[a-zA-Z]/g) || []).length;
+    if (digits / w.length > 0.5 && letters <= 2 && !/^Rp/i.test(w)) return true;
+  }
 
   // Token Latin terisolasi 1 karakter (selain "a"/"i") — ciri khas teks yang
   // terbaca MIRING (OCR memecah karakter menjadi simbol tunggal terpisah).

@@ -1,6 +1,7 @@
 const logger = require('../../services/logger');
 const { DocumentNode, Table } = require('../models/documentModel');
 const { detectTableFromLines } = require('../../ocr/tableDetector');
+const { cleanLineText } = require('../../utils/garbageTokens');
 
 const HEADING_PATTERNS = {
   BAB: /^BAB\s+([IVXLCDM]+|[0-9]+)/i,
@@ -35,7 +36,10 @@ const documentTreeBuilder = {
     const paragraphs = this._groupIntoParagraphs(lines, tableLineIdx);
     const groups = this._detectTables(paragraphs);
     for (const tr of tableResults) {
-      const tableNode = new Table({ headers: tr.table.headers, rows: tr.table.rows });
+      const tableNode = new Table({
+        headers: (tr.table.headers || []).map((c) => cleanLineText(c)),
+        rows: (tr.table.rows || []).map((r) => r.map((c) => cleanLineText(c))),
+      });
       groups.push({ type: 'table', content: tableNode, pos: tr.startIdx });
     }
     groups.sort((a, b) => this._groupPos(a) - this._groupPos(b));
@@ -288,8 +292,12 @@ const documentTreeBuilder = {
       }
     }
     if (rows.length === 0) return null;
-    const headers = rows[0];
-    const dataRows = rows.slice(1).filter((r) => r.length >= 1);
+    // Perbaikan v29.1: teks tabel TIDAK lewat pipeline cleanLines (hanya
+    // ctx.lines) — sel berisi garbage OCR/mirror ("1 1 T T 1 1") harus
+    // dirapikan di sini sebelum dirender.
+    const cleaned = rows.map((r) => r.map((c) => cleanLineText(c)));
+    const headers = cleaned[0];
+    const dataRows = cleaned.slice(1).filter((r) => r.length >= 1);
     return new Table({ headers, rows: dataRows });
   },
 

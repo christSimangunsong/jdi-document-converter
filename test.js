@@ -661,6 +661,23 @@ test('documentTreeBuilder interleaves table at original position', async () => {
   assert.ok(childTypes[tableIdx - 1] === 'ayat' || childTypes[tableIdx - 1] === 'paragraph');
 });
 
+test('documentTreeBuilder membersihkan garbage OCR dalam sel tabel', async () => {
+  const lines = [
+    new Line({ text: '| No | Dinas | Kontribusi |', page: 0 }),
+    new Line({ text: '| 1 | Dinas Lingkungan 1 1 T T 1 1 | 30% 国 |', page: 0 }),
+    new Line({ text: '| 2 | Dinas Pekerjaan Umum | Rp 5.000 |', page: 0 }),
+  ];
+  const tree = await documentTreeBuilder.build(lines);
+  const table = tree.children.find((c) => c.type === 'table');
+  assert.ok(table, 'tabel harus terdeteksi');
+  const md = markdownGenerator.generate(tree);
+  assert.ok(md.includes('Dinas Lingkungan'), 'teks sah dalam sel dipertahankan');
+  assert.ok(!md.includes('T T'), 'run mirror dalam sel dibersihkan');
+  assert.ok(!/国/.test(md), 'CJK dalam sel dibersihkan');
+  assert.ok(md.includes('30%'), 'angka dalam sel dipertahankan');
+  assert.ok(md.includes('Rp 5.000'), 'Rp dalam sel dipertahankan');
+});
+
 test('documentTreeBuilder detects title', async () => {
   const lines = [
     new Line({ text: 'PERATURAN DESA NOMOR 5 TAHUN 2020 TENTANG PEMERINTAHAN DESA', page: 0 }),
@@ -1433,7 +1450,207 @@ test('tableAwareWins: both good -> best score wins', () => {
 });
 
 // ========================================================================
-console.log('\n=== 13. Exit code ===');
+// 13. Perbaikan kualitas output (P2/P5/P3): garbage non-Latin, mirror
+//     detection, dedup baris lintas halaman
+// ========================================================================
+console.log('\n=== 13. Perbaikan kualitas output ===');
+
+test('isGarbageWord: Greek letter mixed token', () => {
+  assert.strictEqual(isGarbageWord('ν1'), true, '"ν1" harus garbage (Yunani)');
+});
+
+test('isGarbageWord: isolated union symbol', () => {
+  assert.strictEqual(isGarbageWord('∪'), true, '"∪" harus garbage');
+});
+
+test('isGarbageWord: isolated greek letter', () => {
+  assert.strictEqual(isGarbageWord('ν'), true, '"ν" harus garbage');
+});
+
+test('isGarbageWord: repeated superscript token', () => {
+  assert.strictEqual(isGarbageWord('u¹5nu1¹5aux'), true, 'superscript berulang harus garbage');
+});
+
+test('isGarbageWord: digit-dominant with few letters', () => {
+  assert.strictEqual(isGarbageWord('bo20202'), true, '"bo20202" harus garbage');
+});
+
+test('isGarbageWord: legit words not garbage', () => {
+  assert.strictEqual(isGarbageWord('Dinas'), false);
+  assert.strictEqual(isGarbageWord('melalui'), false);
+  assert.strictEqual(isGarbageWord('lingkungan'), false);
+  assert.strictEqual(isGarbageWord('pelaksanaan'), false);
+});
+
+test('isGarbageWord: legit numbers not garbage', () => {
+  assert.strictEqual(isGarbageWord('1.000'), false, 'angka murni bukan garbage');
+  assert.strictEqual(isGarbageWord('2020'), false);
+  assert.strictEqual(isGarbageWord('Rp1.500'), false, 'nilai uang Rp bukan garbage');
+  assert.strictEqual(isGarbageWord('tahun2020'), false, 'kata dengan digit bukan garbage');
+});
+
+const { _hasMirrorGarbage, _reOcrWithScaleEscalation } = require('./src/ocr/router');
+
+test('_hasMirrorGarbage: CJK mirror text detected', () => {
+  assert.strictEqual(_hasMirrorGarbage('NOLERA TA RORANS AN D p 2 国 lpom era'), true);
+});
+
+test('_hasMirrorGarbage: union symbol garbage detected', () => {
+  assert.strictEqual(_hasMirrorGarbage('Dias LIugKuugaul rcup1Uvouuatc1a ∪ aua'), true);
+});
+
+test('_hasMirrorGarbage: clean text not detected', () => {
+  assert.strictEqual(
+    _hasMirrorGarbage('Bupati Dairi menetapkan peraturan tentang pengelolaan sampah rumah tangga'),
+    false,
+  );
+});
+
+test('_reOcrWithScaleEscalation: no-op when preprocess disabled', async () => {
+  const current = { score: { score: 0.5 }, blocks: [], text: 'teks awal', engine: 'paddle' };
+  const result = await _reOcrWithScaleEscalation(0, [], { preprocess: false }, null, current);
+  assert.strictEqual(result, current, 'harus return current apa adanya');
+});
+
+// ========================================================================
+// 14. Output Cleaner v29 (outputCleaner) — rapikan tanpa hapus konten
+// ========================================================================
+console.log('\n=== 14. Output Cleaner v29 ===');
+
+const {
+  cleanLineText,
+  cleanOutputText,
+  cleanLines,
+  countGarbageTokens,
+} = require('./src/reconstruction/cleaner/outputCleaner');
+
+test('cleanLineText: token CJK acak dihapus, kata Latin utuh', () => {
+  const out = cleanLineText('Bupati Dairi 国 楼 menetapkan peraturan 区');
+  assert.strictEqual(out, 'Bupati Dairi menetapkan peraturan');
+});
+
+test('cleanLineText: simbol terisolasi (∪ ν ¹) dihapus', () => {
+  const out = cleanLineText('Pasal 1 ∪ ν ¹ ayat (2) ¹');
+  assert.strictEqual(out, 'Pasal 1 ayat (2)');
+});
+
+test('cleanLineText: kata Latin dan angka sah tidak disentuh', () => {
+  const out = cleanLineText('Rp1.500,00 30% (tiga puluh persen) Tahun 2020');
+  assert.strictEqual(out, 'Rp1.500,00 30% (tiga puluh persen) Tahun 2020');
+});
+
+test('cleanLineText: normalisasi spasi ganda', () => {
+  assert.strictEqual(cleanLineText('Bupati    Dairi   menetapkan'), 'Bupati Dairi menetapkan');
+});
+
+test('cleanOutputText: baris murni garbage jadi kosong, baris sah utuh', () => {
+  const text = 'Bupati Dairi menetapkan\n国 国 ∪\nkota kecil Kota 1 1';
+  const out = cleanOutputText(text);
+  const lines = out.split('\n');
+  assert.strictEqual(lines[0], 'Bupati Dairi menetapkan');
+  assert.strictEqual(lines[1], '');
+  assert.strictEqual(lines[2], 'kota kecil Kota 1 1');
+});
+
+test('cleanLines: mempertahankan metadata line, teks dibersihkan', () => {
+  const lines = [
+    { text: 'Bupati Dairi 国 menetapkan', page: 3, order: 0 },
+    { text: 'Pasal 1 ayat (2) ∪', page: 3, order: 1 },
+  ];
+  const out = cleanLines(lines);
+  assert.strictEqual(out.length, 2, 'jumlah baris tidak berubah');
+  assert.strictEqual(out[0].text, 'Bupati Dairi menetapkan');
+  assert.strictEqual(out[1].text, 'Pasal 1 ayat (2)');
+  assert.strictEqual(out[0].page, 3, 'metadata page dipertahankan');
+  assert.strictEqual(out[1].order, 1, 'metadata order dipertahankan');
+});
+
+test('countGarbageTokens: menghitung token garbage saja', () => {
+  assert.strictEqual(countGarbageTokens('Bupati 国 ∪ menetapkan ν1'), 3);
+  assert.strictEqual(countGarbageTokens('Bupati Dairi menetapkan'), 0);
+});
+
+test('cleanLineText: run fragmen mirror dihapus, kata Latin utuh dipertahankan', () => {
+  const out = cleanLineText('T E SALINAN L R 3 1 E 5. E BUPATI DAIRI');
+  assert.strictEqual(out, 'SALINAN BUPATI DAIRI');
+});
+
+test('cleanLineText: run mirror per baris (whole-page multi-line)', () => {
+  const out = cleanOutputText('T E SALINAN\nL R 3 1 E 5. E BUPATI\nPasal 1 ayat (2)');
+  const lines = out.split('\n');
+  assert.strictEqual(lines[0], 'SALINAN');
+  assert.strictEqual(lines[1], 'BUPATI');
+  assert.strictEqual(lines[2], 'Pasal 1 ayat (2)');
+});
+
+test('cleanLineText: angka menempel di kata dinormalisasi (TAHUN2020)', () => {
+  const out = cleanLineText('PERATURAN BUPATI DAIRI NOMOR20 TAHUN2020 TENTANG');
+  assert.strictEqual(out, 'PERATURAN BUPATI DAIRI NOMOR 20 TAHUN 2020 TENTANG');
+});
+
+test('cleanLineText: struktur sah tidak disentuh (BAB I, huruf a, Rp 5.000)', () => {
+  assert.strictEqual(cleanLineText('BAB I di daerah'), 'BAB I di daerah');
+  assert.strictEqual(cleanLineText('huruf a ayat (1)'), 'huruf a ayat (1)');
+  assert.strictEqual(cleanLineText('Rp 5.000 sebesar 30%'), 'Rp 5.000 sebesar 30%');
+  assert.strictEqual(cleanLineText('1. Undang-Undang Dasar 1945'), '1. Undang-Undang Dasar 1945');
+});
+
+test('cleanLineText: run digit tanpa huruf tetap utuh (data tabel)', () => {
+  assert.strictEqual(cleanLineText('kota kecil Kota 1 1'), 'kota kecil Kota 1 1');
+});
+
+test('cleanLineText: run bare campur huruf dihapus dari baris tabel OCR', () => {
+  const out = cleanLineText('kota kecil Kota 1 1 T T 1 1 Dinas Lingkungan');
+  assert.strictEqual(out, 'kota kecil Kota Dinas Lingkungan');
+});
+
+test('cleanLineText: huruf tunggal setelah penanda daftar dihapus (b. I, d. F, e. k)', () => {
+  assert.strictEqual(cleanLineText('b. I Kelurahan Batang Beruh'), 'b. Kelurahan Batang Beruh');
+  assert.strictEqual(cleanLineText('d. F Kelurahan Kuta Garmbir'), 'd. Kelurahan Kuta Garmbir');
+  assert.strictEqual(cleanLineText('e. k Kelurahan Bintang Hulu'), 'e. Kelurahan Bintang Hulu');
+});
+
+test('cleanLineText: angka & marker setelah penanda daftar tetap utuh', () => {
+  assert.strictEqual(cleanLineText('a. 1 Kelurahan Sidikalang'), 'a. 1 Kelurahan Sidikalang');
+  assert.strictEqual(cleanLineText('a. b. c. d.'), 'a. b. c. d.');
+  assert.strictEqual(cleanLineText('huruf a dan b'), 'huruf a dan b');
+});
+
+test('cleanLineText: dot internal artefak OCR dirapikan, singkatan sah utuh', () => {
+  assert.strictEqual(cleanLineText('L SAL.INAN T BUPATI DAIRI'), 'L SALINAN T BUPATI DAIRI');
+  assert.strictEqual(cleanLineText('ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006'), 'ttd. EDDY KELENG ATE BERUTU, NIP. 197010221998031006');
+  assert.strictEqual(cleanLineText('a.n. Kepala Bagian Hukum'), 'a.n. Kepala Bagian Hukum');
+});
+
+test('cleanLineText: BAB menempel dengan angka Romawi dirapikan (BABI)', () => {
+  assert.strictEqual(cleanLineText('BABI KETENTUAN UMUM'), 'BAB I KETENTUAN UMUM');
+  assert.strictEqual(cleanLineText('BABII ARAH JAKSTRADA'), 'BAB II ARAH JAKSTRADA');
+  assert.strictEqual(cleanLineText('BAB IV di daerah'), 'BAB IV di daerah');
+  assert.strictEqual(cleanLineText('BABINSA desa binaan'), 'BABINSA desa binaan');
+});
+
+test('cleanLineText: baris tabel mirror konsonan-dense dihapus, prosa aman', () => {
+  assert.strictEqual(
+    cleanLineText('| s88rsT smuA rdsqms& rlslmsi Istsxgrnimsq ns1sesd .d Tusbi9t sggrtsT dsmu9 rdsqms2 eisjp2 rfsqmse n |'),
+    ''
+  );
+  assert.strictEqual(
+    cleanLineText('Bupati Dairi menetapkan peraturan daerah yang mengatur sampah'),
+    'Bupati Dairi menetapkan peraturan daerah yang mengatur sampah'
+  );
+  assert.strictEqual(cleanLineText('APBD DAK DAU'), 'APBD DAK DAU');
+  assert.strictEqual(cleanLineText('Bupati Dairi Kabupaten Dairi'), 'Bupati Dairi Kabupaten Dairi');
+});
+
+test('cleanLineText: baris tabel sah dengan angka tetap utuh', () => {
+  assert.strictEqual(
+    cleanLineText('Kelurahan Sidikalang 366.000.000,00 1.500.000,00'),
+    'Kelurahan Sidikalang 366.000.000,00 1.500.000,00'
+  );
+});
+
+// ========================================================================
+console.log('\n=== 15. Exit code ===');
 console.log(`\nHasil: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   console.log('Test gagal:');

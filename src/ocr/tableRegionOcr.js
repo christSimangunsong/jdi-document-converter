@@ -1,7 +1,8 @@
 const logger = require('../services/logger');
 const { deskewImage } = require('./deskewRouter');
 const { preprocessImage } = require('./preprocessor');
-const { normalizeBbox } = require('./cellOcr');
+const { normalizeBbox, ocrTableCell, formatAsciiTable, fixTableCellSymbol } = require('./cellOcr');
+const { computeQualityScore } = require('./qualityMetrics');
 
 const REGION_PADDING = 12;
 const REGION_UPSCALE = 2;
@@ -9,6 +10,7 @@ const LINE_DENSITY_THRESHOLD = 0.6;
 const MIN_REGION_SIZE = 40;
 const GRID_VERT_MARGIN = 0.05;
 const GRID_MIN_INNER_VERT = 3;
+const MIN_CELL_W = 10;
 
 function _toGrayData(canvas) {
   const ctx = canvas.getContext('2d');
@@ -320,6 +322,58 @@ function _blockInRegion(block, region) {
   return c.x > r.x && c.x < r.x + r.w && c.y > r.y && c.y < r.y + r.h;
 }
 
+// OCR per-sel berbasis garis grid: deteksi garis horizontal+vertikal →
+// rect per sel → OCR tiap sel (2× upscale + grayscale+threshold via
+// ocrTableCell) → rakit baris → tabel ASCII. Menjaga kolom tetap selaras —
+// menghilangkan interleave kolom hasil OCR whole-page pada tabel grid
+// (mis. halaman lampiran miring yang sudah di-rectify).
+async function ocrGridCells(pageCanvas, engine) {
+  if (!pageCanvas || !engine) return null;
+  try {
+    const { gray, w, h } = _toGrayData(pageCanvas);
+    if (w * h < 10000) return null;
+    const thr = _otsu(gray, w, h);
+    const horiz = _detectHorizLines(gray, w, h, thr);
+    const vert = _detectVertLines(gray, w, h, thr);
+    if (horiz.length < 2 || vert.length < 2) return null;
+
+    const rows = [];
+    for (let i = 0; i < horiz.length - 1; i++) {
+      const y0 = horiz[i];
+      const y1 = horiz[i + 1];
+      if (y1 - y0 < MIN_REGION_SIZE) continue;
+      const row = [];
+      for (let j = 0; j < vert.length - 1; j++) {
+        const x0 = vert[j];
+        const x1 = vert[j + 1];
+        if (x1 - x0 < MIN_CELL_W) continue;
+        row.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      }
+      if (row.length >= 2) rows.push(row);
+    }
+    if (rows.length < 2) return null;
+
+    const tableLines = [];
+    for (const row of rows) {
+      const cells = [];
+      for (const cell of row) {
+        let text = await ocrTableCell(pageCanvas, cell, engine);
+        text = fixTableCellSymbol(text);
+        cells.push(text);
+      }
+      tableLines.push(cells);
+    }
+
+    const text = formatAsciiTable(tableLines);
+    if (!text || text.length < 20) return null;
+    logger.info(`  OCR grid per-sel: ${rows.length} baris x ${rows[0].length} kolom`);
+    return { text, rows: tableLines };
+  } catch (err) {
+    logger.warn(`  OCR grid per-sel gagal: ${err.message}`);
+    return null;
+  }
+}
+
 async function repairTableBlocks(pageCanvas, blocks, engine) {
   if (!pageCanvas || !blocks || !engine) return { blocks: blocks || [], replaced: 0, regions: [] };
 
@@ -336,7 +390,23 @@ async function repairTableBlocks(pageCanvas, blocks, engine) {
   logger.info(`  Repair tabel: ${regions.length} region terdeteksi, OCR per-region...`);
   const newBlocks = await ocrTableRegions(canvas, regions, engine);
 
-  if (newBlocks.length === 0) return { blocks, replaced: 0, regions };
+  if (newBlocks.length === 0) {
+    // Region terdeteksi tapi OCR region gagal → coba grid per-sel langsung
+    // dari blok yang ada.
+    const grid = await ocrGridCells(canvas, engine);
+    if (!grid) return { blocks, replaced: 0, regions };
+    const gridScore = computeQualityScore([{ text: grid.text, confidence: 1 }]);
+    const curScore = computeQualityScore(blocks);
+    if (gridScore.score <= curScore.score) return { blocks, replaced: 0, regions };
+    logger.info(
+      `  Repair tabel: grid per-sel menggantikan blok region (score ${curScore.score.toFixed(2)} -> ${gridScore.score.toFixed(2)})`,
+    );
+    return {
+      blocks: [{ text: grid.text, confidence: 1, source: 'grid-cells', quality: 'ok' }],
+      replaced: 1,
+      regions,
+    };
+  }
 
   const kept = blocks.filter((b) => !regions.some((r) => _blockInRegion(b, r)));
   const merged = [...kept, ...newBlocks].sort((a, b) => {
@@ -344,6 +414,41 @@ async function repairTableBlocks(pageCanvas, blocks, engine) {
     const cb = _blockCenter(b);
     return ca.y - cb.y || ca.x - cb.x;
   });
+
+  // Grid per-sel: untuk tabel wired, sel di-OCR satu per satu agar kolom
+  // selaras. Hanya menggantikan bila skor kualitas lebih tinggi (tanpa
+  // regresi); blok whole-page yang kontennya sudah tercakup tabel dibuang.
+  const grid = await ocrGridCells(canvas, engine);
+  if (grid) {
+    const gridScore = computeQualityScore([{ text: grid.text, confidence: 1 }]);
+    const mergedScore = computeQualityScore(merged);
+    if (gridScore.score > mergedScore.score) {
+      const gridLower = grid.text.toLowerCase();
+      const keptFiltered = kept.filter((b) => {
+        const isWholePage = !(b.bbox && (b.bbox.w || b.bbox.x2 || b.bbox.h || b.bbox.y2));
+        if (!isWholePage) return true;
+        const lines = (b.text || '')
+          .split('\n')
+          .map((l) => l.trim().toLowerCase())
+          .filter(Boolean);
+        if (lines.length < 4) return true;
+        let matched = 0;
+        for (const line of lines) {
+          const toks = line.split(/\s+/).filter((w) => w.length >= 4);
+          if (toks.length > 0 && toks.every((t) => gridLower.includes(t))) matched++;
+        }
+        return matched / lines.length < 0.6;
+      });
+      logger.info(
+        `  Repair tabel: grid per-sel menang (score ${mergedScore.score.toFixed(2)} -> ${gridScore.score.toFixed(2)})`,
+      );
+      return {
+        blocks: [...keptFiltered, { text: grid.text, confidence: 1, source: 'grid-cells', quality: 'ok' }],
+        replaced: newBlocks.length,
+        regions,
+      };
+    }
+  }
 
   logger.info(`  Repair tabel: ${newBlocks.length} blok baru menggantikan blok dalam region`);
   return { blocks: merged, replaced: newBlocks.length, regions };
@@ -353,6 +458,7 @@ module.exports = {
   detectTableRegions,
   detectWiredGridRegions,
   ocrTableRegions,
+  ocrGridCells,
   repairTableBlocks,
   blockInRegion: _blockInRegion,
 };

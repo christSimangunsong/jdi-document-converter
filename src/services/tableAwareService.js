@@ -3,6 +3,7 @@ const logger = require('./logger');
 const axios = require('axios');
 
 const HEALTH_CHECK_TIMEOUT = 3000;
+const MAX_PAGE_TIMEOUT = 720000;
 
 /**
  * Client untuk sidecar table_ocr (hybrid img2table + PaddleX).
@@ -50,13 +51,20 @@ async function analyzeTables(pages) {
   }
 
   try {
-    logger.info(`  Mengirim ${payload.length} halaman ke table-ocr (${url})...`);
-    const resp = await axios.post(
-      `${url}/analyze`,
-      { pages: payload },
-      { timeout: config.tableAware.timeout },
-    );
-    return resp.data.results || [];
+    const pageTimeout = Math.min(config.tableAware.timeout || MAX_PAGE_TIMEOUT, MAX_PAGE_TIMEOUT);
+    const results = [];
+    for (const p of payload) {
+      try {
+        logger.info(`  Kirim halaman ke table-ocr (${url})...`);
+        const resp = await axios.post(`${url}/analyze`, { pages: [p] }, { timeout: pageTimeout });
+        const r = resp.data && resp.data.results && resp.data.results[0];
+        results.push(r || { tables: [], note: 'kosong' });
+      } catch (err) {
+        logger.warn(`  Sidecar table-ocr halaman gagal: ${err.message}, lewati halaman`);
+        results.push({ tables: [], note: 'error' });
+      }
+    }
+    return results;
   } catch (err) {
     logger.warn(`  Sidecar table-ocr error: ${err.message}`);
     return null;

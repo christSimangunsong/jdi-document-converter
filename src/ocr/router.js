@@ -11,6 +11,7 @@ const { PaddleEngine } = require('./engines/paddleEngine');
 const { TesseractEngine } = require('./engines/tesseractEngine');
 const { SuryaEngine } = require('./engines/suryaEngine');
 const { rotateCanvas } = require('./orientationDetector');
+const { cleanGarbageText, cleanLineText } = require('../utils/garbageTokens');
 
 factory.registerEngine('paddle', PaddleEngine);
 factory.registerEngine('tesseract', TesseractEngine);
@@ -18,7 +19,6 @@ factory.registerEngine('surya', SuryaEngine);
 
 let _engineConfig = null;
 let _engineCache = {};
-let _preprocessedCache = [];
 
 // Mirror horizontal (pencerminan kiri-kanan) — untuk halaman/blok scan yang
 // tercermin; rotasi 0/90/180/270 tidak bisa memperbaikinya.
@@ -125,23 +125,27 @@ function _engineForRetry(engCfg, retry, maxRetries) {
   return engCfg.engine;
 }
 
-function _getPageImage(imageBuffers, i, retry, engCfg) {
+// Cache preprocessing PER-JOB (parameter `jobCache`), bukan global: dua
+// request paralel (mis. upload + batch browser) sebelumnya saling menimpa
+// _preprocessedCache[i] yang di-index nomor halaman absolute sehingga gambar
+// job A dipakai di job B (repair/rescue/probe memakai gambar salah).
+function _getPageImage(imageBuffers, i, retry, engCfg, jobCache) {
   if (!engCfg.preprocess || !imageBuffers[i]) return Promise.resolve(imageBuffers[i]);
 
-  if (!_preprocessedCache[i]) _preprocessedCache[i] = [];
-  if (_preprocessedCache[i][retry]) return Promise.resolve(_preprocessedCache[i][retry]);
+  if (!jobCache[i]) jobCache[i] = [];
+  if (jobCache[i][retry]) return Promise.resolve(jobCache[i][retry]);
 
   const steps = _stepsForRetry(engCfg, retry);
   const options = { steps };
   if (retry > 0) options.upscaleFactor = 1.5 * retry;
 
   return preprocessImage(imageBuffers[i], options).then((img) => {
-    _preprocessedCache[i][retry] = img;
+    jobCache[i][retry] = img;
     return img;
   });
 }
 
-async function _recognizePageCascade(i, imageBuffers) {
+async function _recognizePageCascade(i, imageBuffers, jobCache) {
   const engCfg = getEngineConfig();
   const maxRetries = engCfg.maxRetries;
   let bestScore = null;
@@ -149,10 +153,11 @@ async function _recognizePageCascade(i, imageBuffers) {
   let bestText = '';
   let bestEngine = null;
   let bestRetry = 0;
+  let bestAngle = null;
   let lastError = null;
 
   for (let retry = 0; retry <= maxRetries; retry++) {
-    const img = await _getPageImage(imageBuffers, i, retry, engCfg);
+    const img = await _getPageImage(imageBuffers, i, retry, engCfg, jobCache);
     for (const engineName of getEngineCandidates(_engineForRetry(engCfg, retry, maxRetries))) {
       try {
         const engine = await getEngine(engineName, engCfg);
@@ -170,7 +175,7 @@ async function _recognizePageCascade(i, imageBuffers) {
         }
 
         if (shouldAcceptPage(score)) {
-          return { score, blocks, text, engine: engineName, accepted: true };
+          return { score, blocks, text, engine: engineName, accepted: true, image: img };
         }
       } catch (error) {
         lastError = error;
@@ -190,9 +195,9 @@ async function _recognizePageCascade(i, imageBuffers) {
     'DEBUG-STATE bestRetry=',
     bestRetry,
     'cache=',
-    _preprocessedCache[i] ? Object.keys(_preprocessedCache[i]).join(',') : 'none',
+    jobCache[i] ? Object.keys(jobCache[i]).join(',') : 'none',
     'cacheHit=',
-    !!(_preprocessedCache[i] && _preprocessedCache[i][bestRetry]),
+    !!(jobCache[i] && jobCache[i][bestRetry]),
     'img0=',
     imageBuffers[i].width,
     'x',
@@ -202,28 +207,6 @@ async function _recognizePageCascade(i, imageBuffers) {
     'score=',
     bestScore ? bestScore.score.toFixed(2) : '0',
   );
-  if (bestEngine && _engineCache[bestEngine] && imageBuffers[i]) {
-    try {
-      bestImg =
-        _preprocessedCache[i] && _preprocessedCache[i][bestRetry]
-          ? _preprocessedCache[i][bestRetry]
-          : imageBuffers[i];
-      const repair = await repairTableBlocks(bestImg, bestBlocks, _engineCache[bestEngine]);
-      if (repair.replaced > 0) {
-        const repairedScore = computeQualityScore(repair.blocks);
-        if (!bestScore || repairedScore.score > bestScore.score) {
-          logger.info(
-            `  Halaman ${i + 1}: region repair tabel berhasil (${repair.replaced} blok baru, score ${bestScore ? bestScore.score.toFixed(2) : '0.00'} -> ${repairedScore.score.toFixed(2)})`,
-          );
-          bestScore = repairedScore;
-          bestBlocks = repair.blocks;
-          bestText = repair.blocks.map((b) => b.text).join('\n');
-        }
-      }
-    } catch (err) {
-      logger.warn(`  Region repair halaman ${i + 1} gagal: ${err.message}`);
-    }
-  }
 
   // Fallback rotasi 180/±90: halaman masih kualitas rendah setelah semua
   // retry (misal miring yang lolos koreksi kontur, atau terbalik 180°).
@@ -248,6 +231,80 @@ async function _recognizePageCascade(i, imageBuffers) {
       bestText = variant.text;
       bestEngine = variant.engine;
       bestImg = variant.image;
+      bestAngle = variant.angle;
+    }
+  }
+
+  // Loop eskalasi skala anti-mirror: bila output masih mengandung simbol
+  // terbalik (CJK/Yunani/∪/teks tanpa kata umum) atau belum diterima gate,
+  // gambar diperbesar bertahap dan di-OCR ulang sampai bersih — hasil hanya
+  // dipakai bila skornya lebih baik (tanpa regresi).
+  if (
+    bestScore &&
+    bestImg &&
+    bestBlocks.length > 0 &&
+    (!shouldAcceptPage(bestScore) || _hasMirrorGarbage(bestText || ''))
+  ) {
+    try {
+      const escalated = await _reOcrWithScaleEscalation(i, imageBuffers, engCfg, bestImg, {
+        score: bestScore,
+        blocks: bestBlocks,
+        text: bestText,
+        engine: bestEngine,
+        image: bestImg,
+      });
+      if (escalated && escalated.text !== bestText && escalated.score.score > bestScore.score) {
+        logger.info(
+          `  Halaman ${i + 1}: eskalasi skala anti-mirror (score ${bestScore.score.toFixed(2)} -> ${escalated.score.score.toFixed(2)}, engine ${escalated.engine})`,
+        );
+        bestScore = escalated.score;
+        bestBlocks = escalated.blocks;
+        bestText = escalated.text;
+        bestEngine = escalated.engine;
+        bestImg = escalated.image;
+      }
+    } catch (err) {
+      logger.warn(`  Eskalasi skala halaman ${i + 1} gagal: ${err.message}`);
+    }
+  }
+
+  // Repair tabel (setelah rotasi agar grid selaras pada halaman miring):
+  // region grid di-OCR ulang per region/per-sel, menggantikan blok OCR yang
+  // jelek bila skor kualitasnya lebih tinggi. Gambar dasar = cache retry
+  // terbaik yang SUDAH ter-rectify (deskew/perspective/threshold) — variant
+  // rotasi hanya threshold+rotate tanpa deskew sehingga garis grid miring
+  // lolos deteksi (densitas < 60%). Untuk halaman yang dikoreksi rotasi,
+  // cache rectified di-rotate sebesar bestAngle agar grid selaras.
+  if (bestEngine && _engineCache[bestEngine] && imageBuffers[i] && bestImg) {
+    try {
+      let repairImg = bestImg;
+      const cached = jobCache[i] && jobCache[i][bestRetry];
+      if (cached) {
+        repairImg = cached;
+        if (typeof bestAngle === 'number') {
+          repairImg = await rotateCanvas(cached, bestAngle);
+        }
+      }
+      const repair = await repairTableBlocks(repairImg, bestBlocks, _engineCache[bestEngine]);
+      if (repair.replaced === 0 && repair.regions.length === 0 && bestScore && !shouldAcceptPage(bestScore)) {
+        logger.warn(
+          `  Repair tabel halaman ${i + 1}: 0 region grid pada canvas rectified (${repairImg.width}x${repairImg.height}, score ${bestScore.score.toFixed(2)})`,
+        );
+      }
+      if (repair.replaced > 0) {
+        const repairedScore = computeQualityScore(repair.blocks);
+        if (!bestScore || repairedScore.score > bestScore.score) {
+          logger.info(
+            `  Halaman ${i + 1}: region repair tabel berhasil (${repair.replaced} blok baru, score ${bestScore ? bestScore.score.toFixed(2) : '0.00'} -> ${repairedScore.score.toFixed(2)})`,
+          );
+          bestScore = repairedScore;
+          bestBlocks = repair.blocks;
+          bestText = repair.blocks.map((b) => b.text).join('\n');
+          bestImg = repairImg;
+        }
+      }
+    } catch (err) {
+      logger.warn(`  Region repair halaman ${i + 1} gagal: ${err.message}`);
     }
   }
 
@@ -328,6 +385,69 @@ async function _tryRotationVariants(i, imageBuffers, engCfg) {
   return best;
 }
 
+const SCALE_ESCALATION_FACTORS = [1.0, 1.5, 2.0, 2.5, 3.0];
+
+// Deteksi teks mirror/terbalik (hasil OCR arah salah): mengandung CJK/simbol
+// non-Latin (Yunani, ∪, superscript, box-drawing) atau tidak memiliki satu
+// pun kata umum ("NOLERA TA RORANS AN D p 2"). Output seperti ini tidak
+// boleh lolos — memicu loop eskalasi skala untuk OCR ulang.
+function _hasMirrorGarbage(text) {
+  if (!text) return false;
+  if (
+    /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\u0370-\u03FF\u2200-\u22FF\u2300-\u23FF\u2500-\u257F\u2070-\u209F\u00B2\u00B3\u00B9]/.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  const common = commonWordRatio(text);
+  return common !== null && common === 0;
+}
+
+// Loop re-OCR anti simbol terbalik dengan eskalasi skala: bila output masih
+// mengandung mirror garbage, gambar (orientasi terbaik yang sudah diketahui)
+// diperbesar bertahap 1.5×→2×→2.5×→3× lalu di-OCR ulang sampai bersih atau
+// batas tercapai. Selalu simpan hasil skor terbaik — tidak pernah menurunkan
+// kualitas dari kondisi sebelum loop.
+async function _reOcrWithScaleEscalation(i, imageBuffers, engCfg, bestImg, current) {
+  if (!bestImg || !engCfg.preprocess || !current || !current.score) return current;
+  const steps = (engCfg.preprocessSteps || ['grayscale', 'threshold']).filter(
+    (s) => !['rotate', 'deskew-adaptive', 'perspective'].includes(s),
+  );
+  const out = { ...current, image: bestImg };
+  for (const factor of SCALE_ESCALATION_FACTORS) {
+    if (factor === 1.0) continue; // 1× = hasil retry/rotasi yang sudah ada
+    const img = await preprocessImage(bestImg, { steps, upscaleFactor: factor });
+    for (const engineName of getEngineCandidates(engCfg.engine)) {
+      const engine = await getEngine(engineName, engCfg);
+      if (!engine) continue;
+      const blocks = await engine.recognizeBlocks(img);
+      const score = computeQualityScore(blocks);
+      const text = blocks.map((b) => b.text).join('\n');
+      if (score.score > out.score.score) {
+        out.score = score;
+        out.blocks = blocks;
+        out.text = text;
+        out.engine = engineName;
+        out.image = img;
+      }
+      if (shouldAcceptPage(score) && !_hasMirrorGarbage(text)) {
+        out.score = score;
+        out.blocks = blocks;
+        out.text = text;
+        out.engine = engineName;
+        out.image = img;
+        logger.info(
+          `  Halaman ${i + 1}: skala x${factor} membersihkan mirror garbage (score ${score.score.toFixed(2)}, engine ${engineName})`,
+        );
+        return out;
+      }
+    }
+    if (!_hasMirrorGarbage(out.text) && shouldAcceptPage(out.score)) break;
+  }
+  return out;
+}
+
 // Keputusan gate "kualitas > estetika" untuk blok table-aware: blok sidecar
 // hanya menggantikan blok OCR dalam region bila teksnya TIDAK lebih buruk —
 // ditolak jika terlalu pendek, sarat placeholder "None", rasio CJK tinggi
@@ -391,14 +511,17 @@ function _tableAwareWins(taBlock, ocrBlocks) {
   };
 }
 
-// Filter baris garbage untuk blok whole-page (tanpa bbox): baris yang
-// mengandung CJK atau sangat tidak terbaca (hasil OCR arah salah) dibuang,
-// sementara baris teks nyata tetap dipertahankan.
+// Filter baris garbage untuk blok whole-page (tanpa bbox): setiap baris
+// dirapikan dulu token-nya (garbage individual + run mirror + normalisasi
+// angka menempel), lalu baris yang masih mengandung CJK atau sangat tidak
+// terbaca (hasil OCR arah salah) dibuang, sementara baris teks nyata
+// dipertahankan. Urutan penting: token dibersihkan DULU — baris sah yang
+// menyisipkan CJK acak ("Pasal 1 国") tidak boleh ikut terbuang.
 function _filterWholePageGarbageLines(text) {
   const lines = (text || '').split('\n');
   const kept = [];
   for (const line of lines) {
-    const t = line.trim();
+    const t = cleanLineText(line).trim();
     if (!t) continue;
     if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]/.test(t)) continue;
     if (_lineReadability(t) < -0.5) continue;
@@ -490,6 +613,22 @@ async function _rescueGarbageBlocks(pageCanvas, blocks, engine, engCfg) {
       out.push(block);
       continue;
     }
+
+    // Perbaikan generik v29.1: pembersihan token TANPA SYARAT untuk SEMUA
+    // blok — blok yang lolos gate sekalipun. Fragmen mirror seperti
+    // "T E SALINAN L R 3 1 E 5. E" punya kata Latin utuh sehingga score
+    // tetap tinggi (needsRescue false) dan sebelumnya bocor ke output;
+    // pembersihan token/run di sini menghapusnya tanpa menghapus kalimat.
+    const tokenCleaned = cleanGarbageText(text);
+    if (tokenCleaned !== text) {
+      block = { ...block, text: tokenCleaned };
+      text = tokenCleaned;
+      if (!text.trim()) {
+        out.push(block);
+        continue;
+      }
+    }
+
     // Blok tanpa bbox = hasil recognize dalam bentuk string (seluruh halaman
     // satu region, mis. jalur fallback rotasi) -> gunakan bbox seluruh halaman.
     const hasBbox = !!(block.bbox && (block.bbox.w || block.bbox.x2 || block.bbox.h || block.bbox.y2));
@@ -775,12 +914,12 @@ async function _tryRescueBlock(pageCanvas, block, engine, engCfg) {
 async function performOcr(imageBuffers, onProgress) {
   const results = [];
   const engCfg = getEngineConfig();
-  _preprocessedCache.length = 0;
+  const jobCache = [];
   const pageQuality = [];
 
   for (let i = 0; i < imageBuffers.length; i++) {
     logger.info(`  OCR halaman ${i + 1}/${imageBuffers.length}...`);
-    const outcome = await _recognizePageCascade(i, imageBuffers);
+    const outcome = await _recognizePageCascade(i, imageBuffers, jobCache);
     const pageText = outcome.text || '';
 
     pageQuality.push({
@@ -812,14 +951,15 @@ async function performOcr(imageBuffers, onProgress) {
 async function performOcrBlocks(imageBuffers, onProgress) {
   const results = [];
   const engCfg = getEngineConfig();
-  _preprocessedCache.length = 0;
+  const jobCache = [];
   const pageQuality = [];
   const perPage = [];
   const taRequests = [];
+  let paddlexUsed = 0;
 
   for (let i = 0; i < imageBuffers.length; i++) {
     logger.info(`  OCR blocks halaman ${i + 1}/${imageBuffers.length}...`);
-    const outcome = await _recognizePageCascade(i, imageBuffers);
+    const outcome = await _recognizePageCascade(i, imageBuffers, jobCache);
     let pageBlocks = outcome.blocks || [];
 
     pageQuality.push({
@@ -845,10 +985,19 @@ async function performOcrBlocks(imageBuffers, onProgress) {
 
     if (config.tableAware.enabled && outcome.image) {
       const regions = detectWiredGridRegions(outcome.image);
+      const wired = regions.length > 0;
+      let engine = wired ? 'paddlex' : 'img2table';
+      if (wired && paddlexUsed >= 2) {
+        engine = 'img2table';
+        logger.info(
+          `  Halaman ${i + 1}: grid wired dialihkan ke img2table (maks 2 PaddleX/dokumen)`,
+        );
+      }
+      if (engine === 'paddlex') paddlexUsed++;
       taRequests.push({
         pageIndex: i,
         image: outcome.image,
-        engine: regions.length > 0 ? 'paddlex' : 'img2table',
+        engine,
       });
     }
 
@@ -987,4 +1136,4 @@ const ocrRouter = {
   tableAwareWins: _tableAwareWins,
 };
 
-module.exports = { ocrRouter, _rescueGarbageBlocks, _tryRescueBlock, _filterWholePageGarbageLines, _repairWholePageTopBand };
+module.exports = { ocrRouter, _rescueGarbageBlocks, _tryRescueBlock, _filterWholePageGarbageLines, _repairWholePageTopBand, _hasMirrorGarbage, _reOcrWithScaleEscalation };

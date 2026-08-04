@@ -256,6 +256,7 @@ async function _toOsdCanvas(canvas) {
 }
 
 async function tryTesseractOsd(canvas) {
+  if (config.osd && config.osd.enabled === false) return null;
   const worker = await getTesseractWorker();
   if (!worker) return null;
 

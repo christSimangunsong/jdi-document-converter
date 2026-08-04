@@ -12,6 +12,7 @@ const { chunkBuilder } = require('./output/chunkBuilder');
 const { embeddingFormatter } = require('./output/embeddingFormatter');
 const { visualDebugger } = require('./debug/visualDebugger');
 const { reviewDocument } = require('./review/documentReviewer');
+const { cleanLines } = require('./cleaner/outputCleaner');
 const logger = require('../services/logger');
 
 class Pipeline {
@@ -102,6 +103,7 @@ class Pipeline {
     logger.info(`  DEBUG: after readingOrderResolver — ${ctx.ocrBlocks.length} blocks`);
     onProgress(0.4, 'Menggabungkan baris...');
     ctx.lines = lineMerger.merge(ctx.ocrBlocks);
+    ctx.lines = cleanLines(ctx.lines);
     logger.info(
       `  DEBUG: after lineMerger — ${ctx.lines.length} lines, first text: "${((ctx.lines[0] && ctx.lines[0].text) || '').substring(0, 80)}"`,
     );
