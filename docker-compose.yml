@@ -33,7 +33,7 @@ services:
       - DESKEW_MAX_ANGLE=30
       - TABLE_AWARE_ENABLED=${TABLE_AWARE_ENABLED:-true}
       - TABLE_AWARE_SERVICE_URL=http://table-ocr:5003
-      - TABLE_AWARE_TIMEOUT=3600000
+      - TABLE_AWARE_TIMEOUT=${TABLE_AWARE_TIMEOUT:-720000}
     depends_on:
       db:
         condition: service_healthy

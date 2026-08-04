@@ -5,6 +5,51 @@
 
 ---
 
+## Changelog — 2026-08-04 (v29.4)
+
+### ringkasan
+**Root cause "table-aware tidak pernah jalan" ditemukan & diperbaiki + timeout PaddleX dilonggarkan.** (1) Bug pre-existing di `_recognizePageCascade` (`src/ocr/router.js`): halaman yang DITERIMA gate kualitas (`shouldAcceptPage`) di-early-return **tanpa properti `image`** → gate `config.tableAware.enabled && outcome.image` di `performOcrBlocks` selalu `false` untuk halaman bagus — **table-aware hanya pernah berjalan untuk halaman kualitas rendah** yang lolos full cascade; dokumen scan/digital bersih sama sekali tidak dikirim ke sidecar (log "Kirim halaman ke table-ocr" tidak pernah muncul). (2) `MAX_PAGE_TIMEOUT` dinaikkan 300000 → **720000 (12 mnt)** — PaddleX table_recognition butuh ~9 mnt/halaman wired di CPU, timeout 5 mnt selalu melewati halaman wired → tabel hilang. (3) `docker-compose.yml` masih hardcode `TABLE_AWARE_TIMEOUT=3600000` (1 jam — nilai lama penyebab UI macet saat sidecar hang).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/ocr/router.js` | early-return accepted: `return { score, blocks, text, engine, accepted: true }` TANPA `image` → `outcome.image` undefined → table-aware skip diam-diam | `return { ..., image: img }` — halaman berkualitas baik kini ikut dikirim ke table-aware |
+| `src/services/tableAwareService.js` | `MAX_PAGE_TIMEOUT=300000` (5 mnt) | **720000 (12 mnt)** — batas per-halaman via `Math.min(config.tableAware.timeout, MAX_PAGE_TIMEOUT)`; PaddleX wired ~9 mnt/halaman di CPU |
+| `.env` | `TABLE_AWARE_TIMEOUT=300000` | `720000` |
+| `docker-compose.yml` | `TABLE_AWARE_TIMEOUT=3600000` hardcoded | `TABLE_AWARE_TIMEOUT=${TABLE_AWARE_TIMEOUT:-720000}` |
+
+### detail
+
+**Verifikasi runtime (uji user via UI, server PID 13904, semua fix dimuat)**: Perbub No 21/2020 Pendidikan Anti Korupsi (PDF digital, 15 hlm) — **~77 dtk total**, skor review **0.94**, markdown 19.455 char, **8 halaman dikirim per-halaman ke table-ocr (14:02:28–44, ~2-6 dtk/hlm via img2table)**, sidecar kembali idle setelahnya — **tanpa hang**. Sebelum fix: log tidak pernah memuat "Kirim halaman ke table-ocr" untuk dokumen bagus (hanya muncul di uji sintetis saat halaman low-quality).
+
+**Catatan operasional**: (1) test CLI 27-hlm yang di-abort (13:48) meninggalkan sidecar 5003 sibuk ±18 mnt (CPU 165-177%) menyelesaikan halaman PaddleX wired yang sedang diproses — request berikutnya mengantre (wajar, bukan hang); (2) proses background `verify_pipeline.js` yang di-spawn opencode ditemukan masih hidup padahal output sudah selesai ditulis — script tidak memanggil `process.exit()` sehingga event loop tetap terbuka; dibersihkan via kill; (3) komit `4e5c53a` (12:32, "v27-v29.2") sudah memuat seluruh fix kode v29.2+v29.3 termasuk early-return image di atas.
+
+---
+
+## Changelog — 2026-08-04 (v29.3)
+
+### ringkasan
+**Verifikasi end-to-end v29.1 pada dokumen asli user + penyempurnaan aturan garbage + perbaikan bug konkurensi.** Dua dokumen scan asli diverifikasi penuh (36 hlm + 18 hlm) dengan hasil: **cjk=0, symbols=0, mirrorRuns=0, glue=0** pada keduanya. Ditemukan 3 sisa cacat yang diperbaiki di `garbageTokens.js`; dan bug konkurensi pre-existing di `router.js` (cache preprocessed GLOBAL) yang menyebabkan status RUSAK saat dua konversi berjalan paralel.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/utils/garbageTokens.js` | `cleanLineText`: huruf tunggal setelah marker Lolos (sisa OCR kolom tabel "b. I", "d. F", "e. k"); "BABI" tidak dinormalisasi; baris tabel mirror tanpa vokal ("\| s88rsT smuA rdsqms& ... \|") tidak dihapus | (1) **huruf tunggal setelah penanda daftar dihapus** ("b. I Kelurahan" → "b. Kelurahan") — aman: "a. 1" (digit), "a. b. c. d." (marker) utuh; (2) **`normalizeGluedBABRoman`** ("BABI"→"BAB I", "BABII"→"BAB II") — "BABINSA" aman; (3) **baris konsonan-dense dihapus**: ≥5 token dengan ≥70% rasio konsonan (tanpa vokal) → baris garbage murni di-drop ("\| s88rsT smuA rdsqms& ... \|" hilang) — prosa normal/singkatan pendek ("APBD DAK DAU") aman |
+| `src/ocr/router.js` | `_preprocessedCache[i]` GLOBAL di-index nomor halaman absolute | **cache PER-JOB**: `_getPageImage(imageBuffers, i, retry, engCfg, jobCache)` + `_recognizePageCascade(i, imageBuffers, jobCache)`; `performOcr` & `performOcrBlocks` bikin `const jobCache = []` lokal — dua konversi paralel (upload browser + batch) tidak lagi saling menimpa cache halaman → fix "Cannot set properties of undefined (setting '0')" → RUSAK |
+| `test.js` | 182 tests | **187 tests** (+5: huruf tunggal setelah marker "b. I"/"d. F"/"e. k", marker/angka aman "a. 1"/"a. b. c. d.", BABI→BAB I + BABINSA aman, baris mirror konsonan-dense dihapus + prosa/singkatan aman, baris tabel angka utuh) |
+
+### detail
+
+**Verifikasi (runtime, dokumen asli user via `verify_pipeline.js` standalone — tanpa server, render 1x→rectify→deteksi tabel→render 2x/3x→`ocrRouter.performOcrBlocks`→`runReconstruction`)**:
+- **Perbub Sampah 2/2020 (36 hlm, 7 halaman tabel)**: **147.070 char** (baseline v29 58.714 — konten lampiran yang dulu terpotong kini lengkap), **cjk=0, symbols=0, mirrorRuns=0, glue=0**, review 0.74 (4 issue), blocks=50, rotasi fallback aktif di hlm 10-15.
+- **Perbub DAU Tambahan 20/2020 (18 hlm, 12 halaman tabel)**: **38.855 char** (sebelumnya 21.209 — run pertama terpotong memori), **cjk=0, symbols=0, mirrorRuns=0, glue=0**, review 0.87 (2 issue), blocks=28, tablePages=12.
+- `npm test` 187 passed 0 failed; lint 0 error (20 warning pre-existing).
+- **Catatan memori**: PC user hanya 7.8 GB RAM (bebas ±1-2 GB dengan opencode+VS Code+sidecar) — proses verify S3 sempat mati senyap 2× saat dua proses node+paddle jalan bersamaan; fix `verify_pipeline.js`: lepas `lowImages`/`images` (`length = 0`) agar canvas bisa di-GC sebelum pipeline lanjut. Server user (port 3000) sudah restart otomatis (PID baru) dan kini memuat kode v29.3.
+
+---
+
 ## Changelog — 2026-08-04 (v29.2)
 
 ### ringkasan
