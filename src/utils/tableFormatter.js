@@ -75,11 +75,14 @@ function formatTablePlainText(tableData) {
   return lines.join('\n');
 }
 
-function formatTableHtmlToText(html) {
-  if (!html) return '';
+// (v30.4) Parsing HTML tabel -> tableData [{cells, isHeader}] + pembersihan
+// baris header indeks / baris kosong. Dipisahkan agar mode transkripsi bisa
+// memakai data sel yang sama tanpa grid ASCII.
+function parseTableHtml(html) {
+  if (!html) return [];
 
   const rows = html.match(/<tr[^>]*>.*?<\/tr>/gis);
-  if (!rows) return cleanCellText(html.replace(/<[^>]+>/g, ''));
+  if (!rows) return [];
 
   const tableData = [];
 
@@ -92,7 +95,7 @@ function formatTableHtmlToText(html) {
     tableData.push({ cells: rowData, isHeader });
   }
 
-  if (tableData.length === 0) return '';
+  if (tableData.length === 0) return [];
 
   // Buang baris header indeks kolom (baris pertama saja) dan baris yang
   // semua selnya kosong setelah pembersihan.
@@ -105,7 +108,14 @@ function formatTableHtmlToText(html) {
     }
   }
 
-  if (tableData.length === 0) return '';
+  return tableData;
+}
+
+function formatTableHtmlToText(html) {
+  if (!html) return '';
+
+  const tableData = parseTableHtml(html);
+  if (tableData.length === 0) return cleanCellText(html.replace(/<[^>]+>/g, ''));
 
   const rawCounts = tableData.map((r) => r.cells.length);
   const colCounts = tableData.map((r) => r.cells.length);
@@ -165,4 +175,11 @@ function formatTableHtmlToText(html) {
   return lines.join('\n');
 }
 
-module.exports = { formatTableHtmlToText, formatTablePlainText, _tableGridUsable, cleanCellText, isIndexRow };
+module.exports = {
+  formatTableHtmlToText,
+  formatTablePlainText,
+  parseTableHtml,
+  _tableGridUsable,
+  cleanCellText,
+  isIndexRow,
+};

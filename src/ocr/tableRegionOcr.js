@@ -1,4 +1,5 @@
 const logger = require('../services/logger');
+const config = require('../config');
 const { deskewImage } = require('./deskewRouter');
 const { preprocessImage } = require('./preprocessor');
 const { normalizeBbox, ocrTableCell, formatAsciiTable, fixTableCellSymbol } = require('./cellOcr');
@@ -364,7 +365,11 @@ async function ocrGridCells(pageCanvas, engine) {
       tableLines.push(cells);
     }
 
-    const text = formatAsciiTable(tableLines);
+    // (v30.4) Mode transkripsi: sel per baris " | " tanpa grid ASCII.
+    const text =
+      config.transcription && config.transcription.enabled
+        ? tableLines.map((r) => r.join(' | ')).join('\n')
+        : formatAsciiTable(tableLines);
     if (!text || text.length < 20) return null;
     logger.info(`  OCR grid per-sel: ${rows.length} baris x ${rows[0].length} kolom`);
     return { text, rows: tableLines };

@@ -10,6 +10,8 @@ const { detectPdfType } = require('./src/pdf/detector');
 const { extractText } = require('./src/pdf/textExtractor');
 const { convertPdfToImages } = require('./src/pdf/imageConverter');
 const { performOcr } = require('./src/ocr/engine');
+const { ocrRouter } = require('./src/ocr/router');
+const { runReconstruction } = require('./src/reconstruction');
 const { cleanText } = require('./src/utils/textCleaner');
 
 fs.ensureDirSync(config.outputDir);
@@ -45,7 +47,26 @@ async function processSingleFile(entry) {
 
     let fullText = '';
 
-    if (detection.type === 'TEXT') {
+    // (v30.4) Mode transkripsi: salinan teks setia (per baris, tanpa struktur).
+    if (config.transcription && config.transcription.enabled) {
+      logger.info('  [3/4] Mode transkripsi — memproses teks...');
+      let blocks = [];
+      if (detection.type !== 'TEXT') {
+        const { images, pageCount } = await convertPdfToImages(pdfBuffer);
+        result.halaman = pageCount;
+        logger.info('  [4/4] Menjalankan OCR (blok)...');
+        blocks = await ocrRouter.performOcrBlocks(images, null, { transcription: true });
+        result.ocrStatus = 'BERHASIL';
+      } else {
+        result.ocrStatus = 'TIDAK DIPERLUKAN';
+      }
+      const doc = await runReconstruction(pdfBuffer, blocks, {
+        ocrEngine: config.ocr ? config.ocr.engine : 'paddle',
+        transcription: true,
+      });
+      fullText = doc.markdown;
+      result.halaman = doc.pages || result.halaman;
+    } else if (detection.type === 'TEXT') {
       logger.info('  [3/4] Mengekstrak teks dari PDF...');
       const extracted = await extractText(pdfBuffer);
       fullText = extracted.text;
@@ -63,11 +84,11 @@ async function processSingleFile(entry) {
     }
 
     logger.info('  Membersihkan teks...');
-    const cleanedText = cleanText(fullText);
+    const outputText = config.transcription && config.transcription.enabled ? fullText : cleanText(fullText);
 
     const outputFileName = `${entry.nama}.txt`;
     const outputPath = path.join(config.outputDir, outputFileName);
-    fs.writeFileSync(outputPath, cleanedText, 'utf-8');
+    fs.writeFileSync(outputPath, outputText, 'utf-8');
 
     const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     result.durasi = `${duration} detik`;

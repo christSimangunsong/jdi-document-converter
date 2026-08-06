@@ -41,6 +41,15 @@ const config = {
     chunkOverlap: parseInt(process.env.RECONSTRUCTION_CHUNK_OVERLAP, 10) || 200,
     outputFormat: process.env.RECONSTRUCTION_OUTPUT_FORMAT || 'markdown',
   },
+  // Mode transkripsi (v30.4): salinan teks setia — per baris, tanpa struktur
+  // buatan (heading markdown, grid ASCII, node BAB/Pasal). Menang atas
+  // RECONSTRUCTION_ENABLED. Tabel: sidecar table-aware tetap dipakai tapi
+  // output plain "sel1 | sel2" per baris (TRANSCRIPTION_TABLE=plain),
+  // bukan grid "+----+".
+  transcription: {
+    enabled: process.env.TRANSCRIPTION_MODE === 'true' || process.env.TRANSCRIPTION_MODE === '1',
+    table: (process.env.TRANSCRIPTION_TABLE || 'plain').toLowerCase(),
+  },
   projection: {
     minRatio: parseFloat(process.env.PROJECTION_MIN_RATIO) || 1.8,
     ambiguousThreshold: parseFloat(process.env.PROJECTION_AMBIGUOUS_THRESHOLD) || 0.65,
@@ -88,6 +97,14 @@ const config = {
   review: {
     enabled: process.env.REVIEW_ENABLED !== 'false' && process.env.REVIEW_ENABLED !== '0',
     maxIssues: parseInt(process.env.REVIEW_MAX_ISSUES, 10) || 50,
+  },
+  jdi: {
+    enabled: process.env.JDIH_ENABLED === 'true' || process.env.JDIH_ENABLED === '1',
+    baseUrl: process.env.JDIH_BASE_URL || '',
+    username: process.env.JDIH_USERNAME || '',
+    password: process.env.JDIH_PASSWORD || '',
+    batchSize: parseInt(process.env.JDIH_BATCH_SIZE, 10) || 10,
+    timeout: parseInt(process.env.JDIH_TIMEOUT, 10) || 30000,
   },
   outputCleanup: {
     maxAgeDays: parseInt(process.env.OUTPUT_CLEANUP_MAX_AGE_DAYS, 10) || 30,

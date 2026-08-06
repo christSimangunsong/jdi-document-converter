@@ -6,6 +6,8 @@ const config = require('./src/config');
 const { cleanText } = require('./src/utils/textCleaner');
 const { rebuildDocumentStructure } = require('./src/utils/DocumentStructureRebuilder');
 const { withRetry } = require('./src/utils/retry');
+const { resolvePdfUrl, normalizeBatch } = require('./src/services/jdihApiClient');
+const { detectPdfType } = require('./src/pdf/detector');
 
 let passed = 0;
 let failed = 0;
@@ -845,6 +847,92 @@ test('Document toJSON includes markdown', () => {
 });
 
 // ========================================================================
+console.log('\n=== 10.5 Transcription mode (v30.4) ===');
+
+const { transcriptionGenerator } = require('./src/reconstruction/output/transcriptionGenerator');
+const { formatTablePlainText, parseTableHtml } = require('./src/utils/tableFormatter');
+const { Pipeline } = require('./src/reconstruction/pipeline');
+
+test('transcriptionGenerator: per baris, trailing whitespace dibuang, baris kosong dipertahankan', () => {
+  const lines = [
+    { text: 'PERATURAN BUPATI DAIRI NOMOR 1 TAHUN 2020  ' },
+    { text: '  ' },
+    { text: '' },
+    { text: 'BAB I' },
+    { text: 'KETENTUAN UMUM   ' },
+  ];
+  const out = transcriptionGenerator.generate(lines);
+  assert.strictEqual(out, 'PERATURAN BUPATI DAIRI NOMOR 1 TAHUN 2020\n\n\nBAB I\nKETENTUAN UMUM');
+});
+
+test('transcriptionGenerator: input kosong/null -> string kosong', () => {
+  assert.strictEqual(transcriptionGenerator.generate([]), '');
+  assert.strictEqual(transcriptionGenerator.generate(null), '');
+});
+
+test('parseTableHtml: HTML tabel -> tableData (tanpa border)', () => {
+  const html =
+    '<table><tr><th>No</th><th>Kegiatan</th></tr><tr><td>1</td><td>Pelatihan</td></tr>' +
+    '<tr><td>2</td><td>Rapat koordinasi desa</td></tr></table>';
+  const data = parseTableHtml(html);
+  assert.strictEqual(data.length, 3);
+  assert.strictEqual(data[0].isHeader, true);
+  assert.deepStrictEqual(data[0].cells, ['No', 'Kegiatan']);
+  assert.deepStrictEqual(data[1].cells, ['1', 'Pelatihan']);
+});
+
+test('parseTableHtml: empty/null -> []', () => {
+  assert.deepStrictEqual(parseTableHtml(''), []);
+  assert.deepStrictEqual(parseTableHtml(null), []);
+});
+
+test('formatTablePlainText: tanpa border ASCII, tanpa wrapping, sel panjang utuh', () => {
+  const longCell = 'A'.repeat(80);
+  const data = [
+    { cells: ['No', 'Kegiatan'], isHeader: true },
+    { cells: ['1', longCell], isHeader: false },
+  ];
+  const out = formatTablePlainText(data);
+  assert.ok(!out.includes('+'), 'tidak ada border +');
+  assert.ok(!out.includes('---'), 'tidak ada garis -');
+  assert.ok(out.includes('1 | ' + longCell), 'sel panjang tidak dipotong/wrap');
+  assert.strictEqual(out.split('\n').length, 2);
+});
+
+test('formatTableHtmlToText: tetap grid ASCII (perilaku lama tidak berubah)', () => {
+  const html = '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>';
+  const out = require('./src/utils/tableFormatter').formatTableHtmlToText(html);
+  assert.ok(out.startsWith('+'), 'grid tetap dimulai dengan +');
+  assert.ok(out.includes('|'), 'grid memuat |');
+});
+
+test('Pipeline transcription: output polos tanpa heading/grid, urutan baris dipertahankan', async () => {
+  const blocks = [
+    { text: 'PERATURAN BUPATI DAIRI', confidence: 0.95, page: 1, bbox: { x: 0, y: 0, w: 100, h: 16 }, order: 0 },
+    { text: 'NOMOR 7 TAHUN 2020', confidence: 0.9, page: 1, bbox: { x: 0, y: 16, w: 100, h: 16 }, order: 1 },
+    { text: 'BAB I KETENTUAN UMUM', confidence: 0.9, page: 1, bbox: { x: 0, y: 32, w: 100, h: 16 }, order: 2 },
+    { text: 'Pasal 1 Dalam Peraturan Bupati ini yang dimaksud dengan:', confidence: 0.9, page: 1, bbox: { x: 0, y: 48, w: 100, h: 16 }, order: 3 },
+    { text: '| 1 | Pelatihan |', confidence: 0.85, page: 1, bbox: { x: 0, y: 64, w: 100, h: 16 }, order: 4 },
+    { text: '| 2 | Rapat desa |', confidence: 0.85, page: 1, bbox: { x: 0, y: 80, w: 100, h: 16 }, order: 5 },
+  ];
+  const pipeline = new Pipeline({
+    transcription: { enabled: true, table: 'plain' },
+    lang: 'id',
+  });
+  // analyzer membutuhkan buffer PDF — berikan buffer kosong (blocks sudah ada)
+  const doc = await pipeline.run(Buffer.from('%PDF-1.4 dummy'), blocks, { transcription: true });
+  const text = doc.markdown;
+  assert.ok(!text.includes('+---'), 'tidak ada grid ASCII');
+  assert.ok(!text.includes('# '), 'tidak ada heading markdown');
+  assert.ok(!text.includes('| ---'), 'tidak ada separator markdown');
+  assert.ok(text.includes('PERATURAN BUPATI DAIRI'), 'baris pertama dipertahankan');
+  assert.ok(text.includes('NOMOR 7 TAHUN 2020'), 'urutan baris dipertahankan');
+  assert.strictEqual(text.split('\n').length, 6, 'semua baris dipertahankan');
+  assert.deepStrictEqual(doc.sections, [], 'tanpa struktur');
+  assert.strictEqual(doc.review, null);
+});
+
+// ========================================================================
 console.log('\n=== 11. Review & Kualitas ===');
 
 const { computeQualityScore, shouldAcceptPage, selectRetryStrategy } = require('./src/ocr/qualityMetrics');
@@ -1591,6 +1679,12 @@ test('cleanLineText: angka menempel di kata dinormalisasi (TAHUN2020)', () => {
   assert.strictEqual(out, 'PERATURAN BUPATI DAIRI NOMOR 20 TAHUN 2020 TENTANG');
 });
 
+test('cleanLineText: NOMOR4TAHUN (angka terjepit) dipecah (v30.4)', () => {
+  assert.strictEqual(cleanLineText('NOMOR4TAHUN 2020'), 'NOMOR 4 TAHUN 2020');
+  assert.strictEqual(cleanLineText('NOMOR20TAHUN 2020'), 'NOMOR 20 TAHUN 2020');
+  assert.strictEqual(cleanLineText('NOMOR 4 TAHUN 2020'), 'NOMOR 4 TAHUN 2020');
+});
+
 test('cleanLineText: struktur sah tidak disentuh (BAB I, huruf a, Rp 5.000)', () => {
   assert.strictEqual(cleanLineText('BAB I di daerah'), 'BAB I di daerah');
   assert.strictEqual(cleanLineText('huruf a ayat (1)'), 'huruf a ayat (1)');
@@ -1951,7 +2045,145 @@ test('config: TABLE_AWARE_MAX_PADDLEX_PAGES default 2, nilai 0 dihormati', () =>
 });
 
 // ========================================================================
-console.log('\n=== 15. Exit code ===');
+console.log('\n=== 15. JDIH OCR API ===');
+
+test('config jdi: default enabled=false, batchSize=10, timeout=30000', () => {
+  const oldEnabled = process.env.JDIH_ENABLED;
+  const oldBatch = process.env.JDIH_BATCH_SIZE;
+  const oldTimeout = process.env.JDIH_TIMEOUT;
+  process.env.JDIH_ENABLED = '';
+  process.env.JDIH_BATCH_SIZE = '';
+  process.env.JDIH_TIMEOUT = '';
+  delete require.cache[require.resolve('./src/config/index.js')];
+  const cfg = require('./src/config/index.js');
+  assert.strictEqual(cfg.jdi.enabled, false, 'JDIH_ENABLED default false');
+  assert.strictEqual(cfg.jdi.batchSize, 10, 'JDIH_BATCH_SIZE default 10');
+  assert.strictEqual(cfg.jdi.timeout, 30000, 'JDIH_TIMEOUT default 30000');
+  assert.strictEqual(typeof cfg.jdi.baseUrl, 'string');
+  assert.strictEqual(typeof cfg.jdi.username, 'string');
+  assert.strictEqual(typeof cfg.jdi.password, 'string');
+  process.env.JDIH_ENABLED = oldEnabled;
+  process.env.JDIH_BATCH_SIZE = oldBatch;
+  process.env.JDIH_TIMEOUT = oldTimeout;
+  delete require.cache[require.resolve('./src/config/index.js')];
+  require('./src/config/index.js');
+});
+
+test('resolvePdfUrl: field url dipakai', () => {
+  assert.strictEqual(resolvePdfUrl({ id: 1, url: 'https://jdih.example.com/files/a.pdf' }), 'https://jdih.example.com/files/a.pdf');
+});
+
+test('resolvePdfUrl: kandidat field lain (pdf_url/file_path/source_path/file_url/file/path)', () => {
+  assert.strictEqual(resolvePdfUrl({ id: 1, pdf_url: 'https://x.com/a.pdf' }), 'https://x.com/a.pdf');
+  assert.strictEqual(resolvePdfUrl({ id: 1, file_path: 'https://x.com/b.pdf' }), 'https://x.com/b.pdf');
+  assert.strictEqual(resolvePdfUrl({ id: 1, source_path: 'https://x.com/c.pdf' }), 'https://x.com/c.pdf');
+  assert.strictEqual(resolvePdfUrl({ id: 1, file_url: 'https://x.com/d.pdf' }), 'https://x.com/d.pdf');
+  assert.strictEqual(resolvePdfUrl({ id: 1, file: 'https://x.com/e.pdf' }), 'https://x.com/e.pdf');
+  assert.strictEqual(resolvePdfUrl({ id: 1, path: 'https://x.com/f.pdf' }), 'https://x.com/f.pdf');
+});
+
+test('resolvePdfUrl: url_file (field asli terverifikasi live jdih.dairikab.go.id) dipakai', () => {
+  assert.strictEqual(
+    resolvePdfUrl({ id: 5, url_file: 'https://s3.dairikab.go.id/jdih/documents/Perbub.pdf' }),
+    'https://s3.dairikab.go.id/jdih/documents/Perbub.pdf',
+  );
+  assert.strictEqual(resolvePdfUrl({ id: 7, nama_file: 'c.pdf' }), null, 'nama_file saja bukan URL');
+});
+
+test('resolvePdfUrl: path relatif digabung dengan JDIH_BASE_URL', () => {
+  const oldBase = process.env.JDIH_BASE_URL;
+  process.env.JDIH_BASE_URL = 'https://jdih.example.com';
+  delete require.cache[require.resolve('./src/config/index.js')];
+  delete require.cache[require.resolve('./src/services/jdihApiClient.js')];
+  const client = require('./src/services/jdihApiClient.js');
+  assert.strictEqual(
+    client.resolvePdfUrl({ id: 1, file_path: '/storage/document/x.pdf' }),
+    'https://jdih.example.com/storage/document/x.pdf',
+  );
+  assert.strictEqual(client.resolvePdfUrl({ id: 1, file_path: '/a/b.pdf' }), 'https://jdih.example.com/a/b.pdf');
+  process.env.JDIH_BASE_URL = oldBase;
+  delete require.cache[require.resolve('./src/config/index.js')];
+  delete require.cache[require.resolve('./src/services/jdihApiClient.js')];
+  require('./src/services/jdihApiClient.js');
+});
+
+test('resolvePdfUrl: tidak ada field URL -> null', () => {
+  assert.strictEqual(resolvePdfUrl({ id: 1, converted: 0 }), null);
+  assert.strictEqual(resolvePdfUrl(null), null);
+  assert.strictEqual(resolvePdfUrl({ id: 1, url: '' }), null);
+  assert.strictEqual(resolvePdfUrl({ id: 1, url: '   ' }), null);
+});
+
+test('normalizeBatch: array langsung / data.data / data.result / non-array', () => {
+  const arr = [{ id: 1 }];
+  assert.deepStrictEqual(normalizeBatch(arr), arr);
+  assert.deepStrictEqual(normalizeBatch({ data: arr }), arr);
+  assert.deepStrictEqual(normalizeBatch({ result: arr }), arr);
+  assert.deepStrictEqual(normalizeBatch({ message: 'kosong' }), []);
+  assert.deepStrictEqual(normalizeBatch(null), []);
+  assert.deepStrictEqual(normalizeBatch('abc'), []);
+});
+
+test('detectPdfType: PDF teks (Uint8Array fix) terdeteksi TEXT, bukan SCAN', async () => {
+  const text =
+    'PERATURAN BUPATI DAIRI NOMOR 1 TAHUN 2024 TENTANG PENETAPAN PEDOMAN PELAKSANAAN KEGIATAN ' +
+    'PEMERINTAHAN DESA YANG DIBIAYAI DARI ALOKASI DANA DESA TAHUN ANGGARAN 2024 DENGAN RAHMAT TUHAN ' +
+    'YANG MAHA ESA BUPATI DAIRI MENIMBANG BAHWA UNTUK MELAKSANAKAN KETENTUAN PERATURAN MENTERI ' +
+    'DALAM NEGERI NOMOR 20 TAHUN 2018 TENTANG PENGELOLAAN KEUANGAN DESA PERLU MENETAPKAN PERATURAN ' +
+    'BUPATI TENTANG PENETAPAN PEDOMAN PELAKSANAAN KEGIATAN PEMERINTAHAN DESA';
+  const objs = [];
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+  objs[2] = '<< /Type /Pages /Kids [3 0 R] /Count 1 >>';
+  objs[3] =
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>';
+  const words = text.split(/\s+/);
+  const stream = words.map((w, i) => `BT /F1 10 Tf 50 ${700 - (i % 40) * 15} Td (${w}) Tj ET`).join('\n');
+  objs[4] = `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`;
+  objs[5] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+  let pdf = '%PDF-1.4\n';
+  const offsets = [];
+  for (let i = 1; i <= 5; i++) {
+    offsets[i] = Buffer.byteLength(pdf);
+    pdf += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xrefStart = Buffer.byteLength(pdf);
+  pdf += 'xref\n0 6\n0000000000 65535 f \n';
+  for (let i = 1; i <= 5; i++) {
+    pdf += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+  }
+  pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+  const det = await detectPdfType(Buffer.from(pdf, 'latin1'));
+  assert.strictEqual(det.type, 'TEXT', 'PDF teks harus TEXT (pdf-parse butuh Uint8Array)');
+  assert.strictEqual(det.pageCount, 1);
+  assert.ok(det.text.includes('PERATURAN BUPATI'), 'teks terekstrak');
+});
+
+test('markConvertedReset: id null -> false (client)', async () => {
+  const client = require('./src/services/jdihApiClient');
+  assert.strictEqual(await client.markConvertedReset(null), false);
+});
+
+test('jdihService: isStopRequested default false, abortIfRequested tidak lempar', () => {
+  const svc = require('./src/services/jdihService');
+  assert.strictEqual(svc.isStopRequested(), false);
+  svc.abortIfRequested();
+});
+
+test('jdihService: stop() -> isStopRequested true, abortIfRequested lempar JDIH_ABORT', () => {
+  const svc = require('./src/services/jdihService');
+  svc.stop();
+  assert.strictEqual(svc.isStopRequested(), true);
+  assert.throws(() => svc.abortIfRequested(), (e) => e.code === 'JDIH_ABORT' && /pengguna/.test(e.message));
+});
+
+test('jdihService: markConvertedReset null -> false (tanpa PATCH)', async () => {
+  const svc = require('./src/services/jdihService');
+  assert.strictEqual(await svc.markConvertedReset(null), false);
+  assert.strictEqual(await svc.markConvertedReset(undefined), false);
+});
+
+// ========================================================================
+console.log('\n=== 16. Exit code ===');
 console.log(`\nHasil: ${passed} passed, ${failed} failed\n`);
 if (failed > 0) {
   console.log('Test gagal:');

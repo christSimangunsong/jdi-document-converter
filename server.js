@@ -22,6 +22,8 @@ const { detectTableRegions } = require('./src/ocr/tableRegionOcr');
 const { deskewImage } = require('./src/ocr/deskewRouter');
 const { correctOrientation } = require('./src/ocr/orientationDetector');
 const activityLogger = require('./src/services/activityLogger');
+const jdihService = require('./src/services/jdihService');
+const { testConnection } = require('./src/services/jdihApiClient');
 const { generateXlsxReport } = require('./src/services/reportExporter');
 
 const app = express();
@@ -187,7 +189,10 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
   const startTime = Date.now();
 
   // Progress dengan fase (nama fase + halaman) — dikonsumsi batch SSE route.
+  // Saat tombol Berhenti JDIH ditekan, callback ini melempar JDIH_ABORT agar
+  // dokumen yang berjalan dihentikan di sela antar halaman/fase (v30.3).
   const progress = (pct, phase, extra) => {
+    jdihService.abortIfRequested();
     if (onProgress) onProgress({ pct, phase, ...extra });
   };
 
@@ -203,7 +208,47 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
       result.pageCount = detection.pageCount;
       if (onProgress) progress(0.05, 'Analisis PDF');
 
-      if (config.reconstruction && config.reconstruction.enabled) {
+      if (config.transcription && config.transcription.enabled) {
+        // (v30.4) Mode transkripsi: salinan teks setia — per baris, tanpa
+        // struktur buatan. Menang atas reconstruction. Tabel: sidecar
+        // table-aware tetap dipakai, output plain "sel1 | sel2".
+        let ocrBlocks = [];
+        if (detection.type !== 'TEXT') {
+          const { images, pageCount: imgPageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
+          result.pageCount = imgPageCount;
+          if (onProgress) progress(0.1, 'Render halaman PDF');
+          ocrBlocks = await performOcrBlocks(images, (page, total) => {
+            if (onProgress) {
+              progress(0.1 + (page / total) * 0.4, `OCR halaman ${page}/${total}`, { page, totalPages: total });
+            }
+          }, { transcription: true });
+          result.ocrStatus = 'BERHASIL';
+        }
+        if (onProgress) progress(0.55, 'Menyusun teks transkripsi');
+
+        const doc = await runReconstruction(pdfBuffer, ocrBlocks, {
+          onProgress: (pct, msg) => {
+            if (onProgress) progress(0.55 + pct * 0.4, msg || 'Transkripsi');
+          },
+          ocrEngine: config.ocr ? config.ocr.engine : 'paddle',
+          transcription: true,
+        });
+        result.text = doc.markdown;
+        result.reconstruction = null;
+
+        // Tulis cache file .txt (DB = sumber utama v29.5; file dihapus saat save)
+        if (!result.text.trim()) {
+          result.status = 'KOSONG';
+          result.errorMessage = 'Hasil konversi kosong — file mungkin rusak atau tidak terbaca';
+        } else {
+          const outputFileName = `${fileName}.txt`;
+          const outputPath = path.join(config.outputDir, outputFileName);
+          await fs.writeFile(outputPath, result.text, 'utf-8');
+          result.outputFile = outputFileName;
+        }
+
+        if (onProgress) progress(0.95, 'Menyiapkan output');
+      } else if (config.reconstruction && config.reconstruction.enabled) {
         let ocrBlocks = [];
         if (detection.type !== 'TEXT') {
           const { images, pageCount: imgPageCount } = await renderPdfImagesWithTableBoost(pdfBuffer);
@@ -301,16 +346,36 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
       }
     }
   } catch (error) {
-    result.status = 'RUSAK';
-    result.errorMessage = error.message;
-    logger.warn(`  File rusak: ${fileName} — ${error.message}`);
+    if (error && error.code === 'JDIH_ABORT') {
+      // Dibatalkan pengguna: jangan simpan status RUSAK dan jangan menulis file.
+      result.status = 'DIHENTIKAN';
+      result.errorMessage = 'Proses dihentikan oleh pengguna';
+      result.text = '';
+      result.outputFile = '';
+      if (fileName) {
+        const cachePath = path.join(config.outputDir, `${fileName}.txt`);
+        await fs.remove(cachePath).catch(() => {});
+      }
+      logger.warn(`  Dihentikan pengguna: ${fileName}`);
+    } else {
+      result.status = 'RUSAK';
+      result.errorMessage = error.message;
+      logger.warn(`  File rusak: ${fileName} — ${error.message}`);
+    }
   }
 
   result.durasi = ((Date.now() - startTime) / 1000).toFixed(1) + ' dtk';
-  if (onProgress) progress(1, 'Selesai');
+  try {
+    if (onProgress) progress(1, 'Selesai');
+  } catch (_) {
+    /* abort saat sentuhan akhir — hasil sudah final, jangan menimpa status */
+  }
 
   return result;
 }
+
+// Injeksi pipeline ke orkestrator JDIH (hindari circular require).
+jdihService.init({ processBuffer });
 
 app.post('/process-url', async (req, res) => {
   try {
@@ -587,6 +652,88 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Integrasi JDIH (service OCR eksternal): polling GET /api/ocr/peraturan,
+// proses PDF, PATCH converted setelah disimpan (hasil sukses) / langsung
+// (hasil gagal — PATCH semua status).
+// ---------------------------------------------------------------------------
+app.post('/api/jdih/start', async (req, res) => {
+  try {
+    if (!jdihService.isEnabled()) {
+      return res.status(400).json({
+        error:
+          'JDIH belum dikonfigurasi — atur JDIH_ENABLED=true, JDIH_BASE_URL, JDIH_USERNAME, JDIH_PASSWORD di .env',
+      });
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    if (res.socket) {
+      res.socket.setNoDelay(true);
+      res.socket.setKeepAlive(true);
+    }
+
+    const send = (event, data) => {
+      try {
+        if (!res.destroyed) {
+          res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        }
+      } catch (e) {
+        logger.error(`[SSE JDIH] Gagal kirim event ${event}: ${e.message}`);
+      }
+    };
+
+    let closed = false;
+    res.on('close', () => {
+      closed = true;
+      jdihService.setListener(null);
+    });
+
+    jdihService.setListener((event, data) => {
+      if (closed) return;
+      send(event, data);
+    });
+
+    const started = await jdihService.runUntilEmpty();
+    if (!started.started) {
+      const reasonMsg =
+        started.reason === 'already-running'
+          ? 'Siklus JDIH sudah berjalan'
+          : started.reason === 'disabled'
+            ? 'JDIH belum dikonfigurasi'
+            : 'Pipeline belum siap';
+      send('error', { status: 'GAGAL', error: reasonMsg });
+      send('done', { total: 0, pending: 0 });
+      if (!closed) res.end();
+      return;
+    }
+
+    if (!closed) res.end();
+  } catch (error) {
+    logger.error(`[WEB] Error start JDIH: ${error.message}`);
+    if (!res.headersSent) res.status(500).json({ error: error.message });
+    else res.end();
+  }
+});
+
+app.post('/api/jdih/stop', (req, res) => {
+  jdihService.stop();
+  res.json({ success: true, message: 'Siklus JDIH akan berhenti setelah item berjalan selesai' });
+});
+
+app.get('/api/jdih/status', (req, res) => {
+  res.json(jdihService.getStatus());
+});
+
+app.post('/api/jdih/test', async (req, res) => {
+  const result = await testConnection();
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
 // Pembersihan cache output/ — DB adalah sumber utama (v29.5), file hanya
 // cache kerja: hapus file yang sudah tersimpan di DB + file stale tua.
 // ---------------------------------------------------------------------------
@@ -686,6 +833,7 @@ app.post('/api/activities/save', async (req, res) => {
       file_size_bytes,
       duration_seconds,
       file_hash,
+      jdih_id,
     } = req.body;
 
     if (!file_name) return res.status(400).json({ error: 'Nama file diperlukan' });
@@ -710,6 +858,7 @@ app.post('/api/activities/save', async (req, res) => {
       source_type: source_type || 'upload',
       source_url: source_url || null,
       file_hash: file_hash || null,
+      jdih_id: jdih_id || null,
       file_type: file_type || null,
       ocr_status: ocr_status || null,
       page_count: page_count || 0,
@@ -733,7 +882,14 @@ app.post('/api/activities/save', async (req, res) => {
       }
     }
 
-    res.json({ success: true, activityId, message: 'Data berhasil disimpan ke database' });
+    // Item dari antrean JDIH: setelah tersimpan di DB, tandai converted di
+    // aplikasi JDIH agar tidak diambil lagi pada batch berikutnya.
+    let jdihPatched = false;
+    if (jdih_id != null) {
+      jdihPatched = await jdihService.markConvertedPending(jdih_id);
+    }
+
+    res.json({ success: true, activityId, message: 'Data berhasil disimpan ke database', jdihPatched });
   } catch (error) {
     const msg = error?.message || error || 'Unknown error';
     logger.error(`[WEB] Error simpan aktivitas: ${msg}`);
@@ -755,7 +911,19 @@ app.delete('/api/activities/:id', async (req, res) => {
     const ok = await activityLogger.deleteActivity(id);
     if (!ok) return res.status(500).json({ error: 'Gagal menghapus aktivitas' });
 
-    res.json({ success: true, message: 'Aktivitas berhasil dihapus' });
+    // v30.3: aktivitas dari JDIH dihapus → re-queue item (converted=0) agar
+    // bisa dikonversi ulang. Gagal re-queue tidak menggagalkan penghapusan.
+    let jdihRequeued = false;
+    if (activity.jdih_id != null) {
+      jdihRequeued = await jdihService.markConvertedReset(activity.jdih_id);
+    }
+
+    res.json({
+      success: true,
+      message: 'Aktivitas berhasil dihapus',
+      jdihRequeued,
+      jdihId: activity.jdih_id || null,
+    });
   } catch (error) {
     logger.error(`[WEB] Error hapus aktivitas: ${error.message}`);
     res.status(500).json({ error: error.message });

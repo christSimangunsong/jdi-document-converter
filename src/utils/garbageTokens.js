@@ -124,8 +124,11 @@ function _isSingleLetter(word) {
 // Normalisasi angka 2-4 digit yang menempel di kata: "TAHUN2020" ->
 // "TAHUN 2020", "NOMOR20" -> "NOMOR 20", "Pasal12" -> "Pasal 12".
 // "Rp1.500" aman (2 huruf), "MP3" aman, "2020an" aman (mulai digit).
+// (v30.4) Pola "NOMOR4TAHUN" (angka terjepit dua kata legal) -> "NOMOR 4 TAHUN".
 function normalizeGluedWordNumber(text) {
-  return text.replace(/\b([A-Za-z]{3,})(\d{2,4})\b/g, '$1 $2');
+  return text
+    .replace(/\b(NOMOR)(\d{1,4})(TAHUN)\b/gi, '$1 $2 $3')
+    .replace(/\b([A-Za-z]{3,})(\d{2,4})\b/g, '$1 $2');
 }
 
 // Normalisasi angka Romawi yang menempel di "BAB": "BABI" -> "BAB I",

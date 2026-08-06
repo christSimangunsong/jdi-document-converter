@@ -5,6 +5,97 @@
 
 ---
 
+## Changelog — 2026-08-06 (v30.4)
+
+### ringkasan
+**Mode transkripsi (`TRANSCRIPTION_MODE=true`) — salinan teks SETIA.** Tujuan proyek berubah ke transkripsi: teks akurat, urut, lengkap, **tanpa struktur buatan** (heading markdown, grid ASCII `+----+`, separator `| --- |`, node BAB/Pasal). Semua perbaikan *kualitas teks* tetap dipakai (preprocess, deskew, rotasi, quality gate, retry, `cleanLines`, `filterPageChrome`, wordFixer, ocrTypos, garbageTokens); semua *abstraksi struktur* dilewati: pipeline berhenti di `ctx.lines` (setelah `cleanLines` + `filterPageChrome`), tanpa `documentTreeBuilder`/`legalParser`/`review`/`markdownGenerator`/`htmlGenerator`. Output = `.txt` polos, satu baris per baris OCR, tanpa `joinBrokenSentences` agresif. **Tabel (opsi a)**: sidecar table-aware TETAP dipakai (akurasi sel terjaga, gate `_tableAwareWins` aktif) tapi output **plain** `sel1 | sel2` per baris — tanpa border, tanpa wrapping/pemotongan 60 char; `ocrGridCells`/repair tabel juga plain. Mode ini **menang atas `RECONSTRUCTION_ENABLED`** (branch pertama di `processBuffer`) dan berlaku untuk **semua jalur**: URL, upload, JDIH, CLI. Reconstruction/legacy tetap utuh (`TRANSCRIPTION_MODE=false`).
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/config/index.js` | tanpa blok transcription | + `transcription: {enabled: TRANSCRIPTION_MODE, table: TRANSCRIPTION_TABLE default 'plain'}` |
+| `.env` | — | + `TRANSCRIPTION_MODE=true`, `TRANSCRIPTION_TABLE=plain` (komentar alur + tabel) |
+| `src/reconstruction/output/transcriptionGenerator.js` (**baru**) | — | `generate(lines)` → per baris, trailing whitespace dibuang, baris kosong dipertahankan; format `{transcriptionGenerator}` (konsisten generator lain) |
+| `src/utils/tableFormatter.js` | parsing HTML di dalam `formatTableHtmlToText` | + `parseTableHtml(html)` (export) — ekstraksi murni; `formatTableHtmlToText` = parse + gate `_tableGridUsable`(grid\|plain), perilaku tidak berubah (test lama hijau) |
+| `src/ocr/router.js` | `performOcrBlocks(images, onProgress)`; tabel selalu grid | + param ketiga `options={transcription}` (default dari config); table-aware → `formatTablePlainText(parseTableHtml(...))` di mode transkripsi |
+| `src/ocr/tableRegionOcr.js` | `ocrGridCells` selalu `formatAsciiTable` | mode transkripsi → `sel | sel` per baris tanpa grid |
+| `src/reconstruction/pipeline.js` | selalu lanjut ke tree/markdown | `options.transcription` (default `config.transcription.enabled`) → berhenti setelah `filterPageChrome`, `ctx.markdown` = teks polos, `html=''`, `json=null`, `chunks=[]`, `review=null`, `sections=[]`; Document dengan `mode:'transcription'` di metadata |
+| `src/reconstruction/index.js` | — | `getPipeline()` meneruskan `config.transcription` |
+| `server.js` | branch reconstruction / legacy | branch **transcription PERTAMA** (sebelum reconstruction): SCAN → `performOcrBlocks(..., {transcription:true})`; `result.text = doc.markdown` (polos), `result.reconstruction = null`; tulis cache `.txt` sama |
+| `app.js` (CLI) | extractText/performOcr → cleanText → rebuild | transcription: `ocrRouter.performOcrBlocks(..., {transcription:true})` + `runReconstruction({transcription:true})`, output tanpa `cleanText` ulang |
+| `src/utils/garbageTokens.js` | `normalizeGluedWordNumber` hanya kata+angka | + pola `NOMOR4TAHUN` → `NOMOR 4 TAHUN` (angka terjepit kata legal) |
+| `test.js` | 226 test | + 8 test (transcriptionGenerator ×2, parseTableHtml ×2, formatTablePlainText tanpa border/wrap, grid lama tetap, Pipeline transcription tanpa heading/grid + urutan, NOMOR4TAHUN) → **234 passed, 0 failed** |
+
+### hasil verifikasi
+
+- **E2E mock** (`%TEMP%\opencode\test_transcription_e2e.js`, TRANSCRIPTION_MODE=true + RECONSTRUCTION_ENABLED=false): PDF teks 9 baris → BERHASIL; output = 9 baris sumber **urutan sama**, tanpa `+----+`, tanpa `| --- |`, tanpa `# ` → **7/7 PASS** (bukti transcription menang atas reconstruction=false).
+- **Dokumen asli JDIH** (Perbub No 4/2020, SCAN 19 hlm + tabel, sidecar table-ocr): `process-url` → BERHASIL 75.5 dtk, 27.325 chars; output: **ASCII border 0, md separator 0, md heading 0**; 95 baris tabel plain ` | ` (sidecar dipakai); `NOMOR4TAHUN 2020` → `NOMOR 4 TAHUN 2020` (fix garbageTokens).
+- `npm test` 234 passed / 0 failed; `npm run lint` 0 error (20 warning pre-existing).
+
+---
+
+
+### ringkasan
+**Stop responsif + re-queue saat hapus aktivitas + redesign UI.** (1) **Stop responsif**: `POST /api/jdih/stop` kini membatalkan dokumen yang sedang berjalan **antar halaman** (bukan hanya antar item) — `jdihService.isStopRequested()` dicek di `progress()` pipeline (`server.js`), lempar `JDIH_ABORT` → item berstatus **`DIHENTIKAN`** (**tanpa PATCH**, tanpa `seenIds` → bisa diproses ulang di run berikutnya; file cache `.txt` dihapus, durasi tetap dihitung). UI badge baru "Dibatalkan". (2) **Re-queue on delete**: kolom **`jdih_id`** ditambahkan ke `conversion_activities` (migrasi ALTER try/catch seperti `file_hash`); `POST /api/activities/save` kini menyimpan `jdih_id`; `DELETE /api/activities/:id` memanggil **`markConvertedReset(id)`** → `PATCH /api/ocr/peraturan/{id}/converted` body `{converted:0}` → item dikembalikan ke antrean JDIH (response `{jdihRequeued}` + toast UI; PATCH no-op aman jika server JDIH menolak — delete tetap sukses). (3) **UI redesain total** (`public/index.html`): design tokens CSS, header dengan logo + pill status, segmented tabs, toast system, kartu hasil dengan badge status, modal detail, stat cards + chart harian/pie, filter tanggal + dropdown unduh, tombol loading dengan spinner, responsif (breakpoint 720px/480px) + `prefers-reduced-motion`.
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/services/jdihService.js` | `stop()` cuma flag antar-item; tanpa reset | + `isStopRequested()`, `abortIfRequested()` (throw `Error` `code:'JDIH_ABORT'`), `markConvertedReset(jdihId)` (hapus `seenIds` + `pendingSave`, log "Re-queue"); `processItem` tangkap `JDIH_ABORT` → emit error `status:'DIHENTIKAN'` + return tanpa PATCH/seenIds |
+| `src/services/jdihApiClient.js` | `markConverted` saja | + `markConvertedReset(id)` (PATCH `{converted:0}` + withRetry; `id` null → false) |
+| `src/services/activityLogger.js` | tanpa `jdih_id` | + migrasi `ALTER TABLE ... ADD COLUMN jdih_id INT DEFAULT NULL AFTER file_hash` (try/catch); INSERT + `jdih_id`; SELECT `getActivityById` + `getActivities` + `jdih_id` |
+| `server.js` | save abaikan `jdih_id`; DELETE tanpa re-queue; progress polos | (1) `progress()` panggil `abortIfRequested()` sebelum `onProgress`; (2) catch `JDIH_ABORT` → `DIHENTIKAN` + hapus cache file; (3) save simpan `jdih_id`; (4) `DELETE /api/activities/:id` → `markConvertedReset` + response `{jdihRequeued, jdihId}` |
+| `public/index.html` | UI lama 3 tab | **Redesign total** (lihat ringkasan); badge `DIHENTIKAN`, toast re-queue, modal detail + `jdih_id`, stat cards, charts, filter laporan |
+| `test.js` | 221 test | + 5 test v30.3 (`markConvertedReset` null client+service, `isStopRequested` default false, `stop()`→throw `JDIH_ABORT`) → **226 passed, 0 failed** |
+
+### perbaikan tambahan (saat uji e2e)
+
+- **Uji e2e v30.3 lulus penuh** (script `%TEMP%\opencode\test_jdih_e2e_v303.js`, mock 9999 + app 3001 + MySQL): (A) start lalu stop → item **DIHENTIKAN**, `PATCH==0`, done `{processed:0, pending:0}`; (B) start tanpa stop → BERHASIL `jdihId=1` → save → `jdihPatched:true` + PATCH `converted=1`; (C) DELETE aktivitas → `jdihRequeued:true` + PATCH `{converted:0}` + item kembali ke antrean; (D) start lagi → item **diproses ulang** (`processed=1`, terbukti `seenIds` dihapus oleh `markConvertedReset`). DB dibersihkan setelah test.
+- **MariaDB XAMPP mati di tengah sesi** (proses mysqld tidak jalan; `mysqld.exe` gagal start: stale `mysql.pid` → "ibdata1 must be writable"; fix: hapus `C:\xamppp\mysql\data\mysql.pid` lalu start dengan `--defaults-file=C:/xamppp/mysql/bin/my.ini`). Server port 3000 di-restart dengan kode v30.3 → `GET /api/jdih/status` `{enabled:true, configured:true}`; halaman `http://localhost:3000` HTTP 200 (70 KB, elemen UI baru terverifikasi).
+
+---
+
+
+### ringkasan
+**Integrasi JDIH OCR API — aplikasi ini menjadi service OCR eksternal JDIH.** Dua endpoint JDIH di-consume: `GET /api/ocr/peraturan` (ambil batch peraturan `converted=0`) dan `PATCH /api/ocr/peraturan/{id}/converted` (tandai selesai). Alur sesuai kesepakatan: tab **JDIH** baru di UI dengan tombol **"Mulai Proses JDIH"** → loop GET → download PDF → pipeline OCR (`processBuffer`) sampai antrean habis → hasil **BERHASIL tampil di UI dulu** (user klik "Simpan ke Database" → PATCH otomatis setelah save sukses via `jdih_id`), hasil **GAGAL/RUSAK/KOSONG langsung di-PATCH** (PATCH semua status, item tanpa field URL dilewati tanpa PATCH). Desain defensif untuk ketidakjelasan dokumentasi: field URL dicoba dari beberapa nama (`url`, `pdf_url`, `file_path`, `source_path`, `file_url`, `file`, `path`), path relatif digabung dengan `baseUrl`; tombol **"Uji Koneksi"** menampilkan response GET mentah agar field asli JDIH bisa diverifikasi. Pengaman anti-loop: `seenIds` persisten mencegah OCR ulang item yang masih menunggu disimpan / belum di-PATCH (siklus berhenti dengan pesan "menunggu disimpan").
+
+### file diubah
+
+| File | sebelum | sesudah |
+|---|---|---|
+| `src/config/index.js` | tanpa blok JDIH | + blok `jdi`: `enabled` (JDIH_ENABLED), `baseUrl`, `username`, `password`, `batchSize` (JDIH_BATCH_SIZE default 10), `timeout` (JDIH_TIMEOUT default 30000) |
+| `src/services/jdihApiClient.js` (**baru**) | — | Klien HTTP axios + Basic Auth: `fetchPeraturanBatch()` (GET, normalisasi `data.data`/`data`/`result`, withRetry), `markConverted(id)` (PATCH), `resolvePdfUrl(item)` (kandidat field defensif + path relatif → absolute via `getBaseUrl()`), `testConnection()` (GET mentah untuk verifikasi kredensial + field) |
+| `src/services/jdihService.js` (**baru**) | — | Orkestrator: `runUntilEmpty()` (loop GET→proses→PATCH sampai antrean kosong / semua item sudah `seenIds`), `processItem` (download + hash SHA256 + `processBuffer`; BERHASIL → pendingSave, lainnya → PATCH langsung), `markConvertedPending(jdihId)` (dipanggil route save), `stop()`, `getStatus()`, `setListener()` (SSE) |
+| `src/services/pdfDownloader.js` | `downloadPdf(url)` tanpa header | + opsi `{headers}` (dipakai JDIH: Basic Auth otomatis bila host download = host JDIH) |
+| `server.js` | import `jdihService` rusak (file tidak ada → MODULE_NOT_FOUND saat start) | (1) import tetap + `jdihService.init({ processBuffer })`; (2) route baru: `POST /api/jdih/start` (SSE progress/result/error/skip/done), `POST /api/jdih/stop`, `GET /api/jdih/status`, `POST /api/jdih/test`; (3) `POST /api/activities/save` + `jdih_id` opsional → setelah save sukses panggil `markConvertedPending` → response `jdihPatched` |
+| `public/index.html` | 3 tab | + tab **JDIH**: status koneksi (badge berjalan), tombol Mulai/Berhenti/Uji Koneksi; JS `startJdih`/`stopJdih`/`testJdih`/`loadJdihStatus`; `saveResultItem` kirim `jdih_id` + label "Tersimpan ✓ (status JDIH ter-update)" bila `jdihPatched` |
+| `.env` | tanpa JDIH | + `JDIH_ENABLED=false`, `JDIH_BASE_URL=`, `JDIH_USERNAME=`, `JDIH_PASSWORD=`, `JDIH_BATCH_SIZE=10`, `JDIH_TIMEOUT=30000` |
+| `test.js` | 214 test | + test v30.2 (config jdi, `resolvePdfUrl` semua field + relatif + null, `normalizeBatch` semua bentuk) → **220 passed, 0 failed** |
+
+### perbaikan tambahan (saat uji e2e)
+
+- **Fix bug laten pdf-parse Buffer** (`src/pdf/detector.js`, `src/pdf/textExtractor.js`, `src/reconstruction/analyzer/textExtractor.js`): pdf-parse v1.10.100 throw `bad XRef entry` saat menerima `Buffer` → wajib `new Uint8Array(buffer)` sebelum `parse()`. Gejala: PDF teks asli terdeteksi SCAN → pipeline RUSAK. Terverifikasi e2e: `detectPdfType` kini TEXT (439 chars).
+- **Uji e2e JDIH lulus penuh** (script `%TEMP%\opencode\test_jdih_e2e.js`, mock port 9999 + server asli port 3001 + MySQL): GET batch → download → OCR → BERHASIL tampil (`pendingSave=1`, PATCH belum) → `POST /api/activities/save {jdih_id:1}` → `jdihPatched:true` → status akhir `{processed:1, patched:1, pendingSave:0, cycles:1}`; item seen tidak di-OCR ulang.
+- **Regression test baru**: `detectPdfType` PDF teks (embed PDF generator di `test.js`, banyak operasi `Tj` agar heuristik digital tidak salah) → **221 passed, 0 failed**.
+
+### verifikasi API nyata (jdih.dairikab.go.id) — konfigurasi produksi
+
+- **Kredensial live terverifikasi** (`dev`/`12345678`): `GET /api/ocr/peraturan?limit=10` → HTTP 200, wrapper `{message, data:[10 item]}` — cocok dengan `normalizeBatch`.
+- **Field URL asli = `url_file`** (mis. `https://s3.dairikab.go.id/jdih/documents/Perbub Nomor 3 ...-min.pdf`) — **ditambahkan ke `PDF_URL_FIELDS`** di `jdihApiClient.js` (sebelumnya tidak ada → semua item akan di-skip). URL bisa berisi spasi — aman via encoding WHATWG (axios).
+- Item **tidak punya field `converted`** — endpoint memang hanya mengembalikan yang pending (sesuai dokumentasi).
+- **PDF di s3.dairikab.go.id publik** (tanpa Basic Auth, `application/pdf`, ~2.8 MB) — aturan host-match untuk Basic Auth sudah benar.
+- **Test env-dependent diperbaiki**: test `config jdi` dan `resolvePdfUrl` kini meng-override `process.env` (dulu mengandalkan `.env` yang lama `JDIH_ENABLED=false`) → **222 passed, 0 failed**.
+
+### detail
+
+**Alur integrasi**: klik "Mulai Proses JDIH" → `POST /api/jdih/start` (SSE) → `runUntilEmpty()`: GET batch (≤10) → tiap item: `resolvePdfUrl` (tidak ada → skip + log, tanpa PATCH) → download (Basic Auth bila host sama) → `processBuffer` dengan progress per fase → BERHASIL: disimpan `pendingSave` + tampil di kartu hasil (belum PATCH); GAGAL/RUSAK/KOSONG: `markConverted` langsung. User klik "Simpan ke Database" → `POST /api/activities/save` dengan `jdih_id` → setelah teks masuk DB → `PATCH converted` otomatis → GET berikutnya tidak menampilkan item lagi. Loop berhenti saat: antrean kosong, semua item batch sudah `seenIds` (belum disimpan), atau tombol Berhenti. `POST /api/jdih/test` mengembalikan response GET mentah (contoh item + field URL terdeteksi) untuk klarifikasi dokumentasi JDIH.
+
+**Catatan**: (1) dokumentasi JDIH hanya menunjukkan `{id, converted:0}` — tanpa field URL, integrasi memproses 0 item; verifikasi via "Uji Koneksi" dan konfirmasi ke tim JDIH nama field URL asli; (2) item BERHASIL yang tidak pernah disimpan user tidak di-PATCH (by design — "tampil di UI dulu"); item tersebut tidak di-OCR ulang (dilewati `seenIds`); (3) `seenIds` persisten selama server hidup (id integer, bounded); (4) kredensial Basic Auth hanya dikirim ke endpoint JDIH dan download dengan host yang sama (tidak bocor ke host lain).
+
+---
+
 ## Changelog — 2026-08-05 (v30.1)
 
 ### ringkasan

@@ -8,7 +8,8 @@ const MAX_IMAGE_RATIO_SCORE = 10;
 
 async function detectPdfType(buffer) {
   try {
-    const data = await pdfParse(buffer);
+    // pdf-parse (pdf.js v1.10.100) gagal dengan Buffer — butuh Uint8Array
+    const data = await pdfParse(new Uint8Array(buffer));
     const pageCount = data.numpages || 1;
     const text = data.text || '';
     const textLength = text.trim().length;

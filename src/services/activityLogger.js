@@ -83,6 +83,13 @@ async function initDatabase() {
       /* kolom sudah ada — abaikan */
     }
 
+    // v30.3: jdih_id untuk re-queue (PATCH converted=0 saat aktivitas dihapus).
+    try {
+      await p.execute(`ALTER TABLE conversion_activities ADD COLUMN jdih_id INT DEFAULT NULL AFTER file_hash`);
+    } catch (_) {
+      /* kolom sudah ada — abaikan */
+    }
+
     logger.info('Database siap');
   } catch (error) {
     logger.error(`Gagal inisialisasi database: ${error?.message || error || 'Unknown error'}`);
@@ -95,10 +102,10 @@ async function logActivity(data) {
     const p = await getPool();
     const [result] = await p.execute(
       `INSERT INTO conversion_activities
-       (session_id, file_name, original_name, source_type, source_url, file_hash,
+       (session_id, file_name, original_name, source_type, source_url, file_hash, jdih_id,
         file_type, ocr_status, page_count, file_size_bytes,
         duration_seconds, status, error_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.session_id,
         data.file_name,
@@ -106,6 +113,7 @@ async function logActivity(data) {
         data.source_type,
         data.source_url || null,
         data.file_hash || null,
+        data.jdih_id || null,
         data.file_type || null,
         data.ocr_status || null,
         data.page_count || 0,
@@ -137,7 +145,7 @@ async function getActivities() {
   try {
     const p = await getPool();
     const [rows] = await p.execute(
-      `SELECT id, session_id, file_name, original_name, source_type, source_url, file_hash,
+      `SELECT id, session_id, file_name, original_name, source_type, source_url, file_hash, jdih_id,
               file_type, ocr_status, page_count, file_size_bytes,
               duration_seconds, status, error_message, text_uploaded,
               created_at, updated_at
@@ -157,7 +165,7 @@ async function getActivityById(id) {
   try {
     const p = await getPool();
     const [rows] = await p.execute(
-      `SELECT id, session_id, file_name, original_name, source_type, source_url, file_hash,
+      `SELECT id, session_id, file_name, original_name, source_type, source_url, file_hash, jdih_id,
               file_type, ocr_status, page_count, file_size_bytes,
               duration_seconds, status, error_message, output_text, text_uploaded,
               created_at, updated_at

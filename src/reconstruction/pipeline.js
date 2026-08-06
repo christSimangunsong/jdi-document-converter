@@ -10,6 +10,7 @@ const { htmlGenerator } = require('./output/htmlGenerator');
 const { semanticJsonGenerator } = require('./output/semanticJsonGenerator');
 const { chunkBuilder } = require('./output/chunkBuilder');
 const { embeddingFormatter } = require('./output/embeddingFormatter');
+const { transcriptionGenerator } = require('./output/transcriptionGenerator');
 const { visualDebugger } = require('./debug/visualDebugger');
 const { reviewDocument } = require('./review/documentReviewer');
 const { cleanLines, filterPageChrome } = require('./cleaner/outputCleaner');
@@ -108,6 +109,45 @@ class Pipeline {
     logger.info(
       `  DEBUG: after lineMerger — ${ctx.lines.length} lines, first text: "${((ctx.lines[0] && ctx.lines[0].text) || '').substring(0, 80)}"`,
     );
+
+    // (v30.4) Mode transkripsi: salinan teks setia — berhenti di sini,
+    // output = baris teks polos (tanpa tree/heading/grid ASCII). Semua
+    // perbaikan kualitas teks di atas tetap dipakai.
+    const transcription =
+      options.transcription !== undefined
+        ? options.transcription
+        : Boolean(this.config.transcription && this.config.transcription.enabled);
+    if (transcription) {
+      onProgress(0.55, 'Menyusun teks transkripsi...');
+      ctx.markdown = transcriptionGenerator.generate(ctx.lines);
+      ctx.html = '';
+      ctx.json = null;
+      ctx.chunks = [];
+      ctx.embedding = [];
+      ctx.review = null;
+      ctx.tree = null;
+      logger.info(
+        `  DEBUG: transcription length = ${(ctx.markdown || '').length}, first 200 chars: "${(ctx.markdown || '').substring(0, 200)}"`,
+      );
+      ctx.duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      logger.info(`  Transkripsi selesai dalam ${ctx.duration}s`);
+      return new Document({
+        title: analysis.title || 'untitled',
+        pages: analysis.pageCount || 0,
+        metadata: {
+          ...analysis,
+          duration: ctx.duration,
+          config: { ocrEngine: options.ocrEngine, lang: this.config.lang, mode: 'transcription' },
+        },
+        sections: [],
+        markdown: ctx.markdown,
+        html: '',
+        json: null,
+        chunks: [],
+        review: null,
+      });
+    }
+
     onProgress(0.5, 'Membangun pohon dokumen...');
     ctx.tree = await documentTreeBuilder.build(ctx.lines, {
       lang: this.config.lang,

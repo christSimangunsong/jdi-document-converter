@@ -3,14 +3,47 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PDF to Text Converter</title>
+    <title>Konverter Dokumen JDIH</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
+      :root {
+        --brand-1: #4f46e5;
+        --brand-2: #7c3aed;
+        --brand-3: #9333ea;
+        --accent: #6366f1;
+        --success: #059669;
+        --success-bg: #d1fae5;
+        --danger: #dc2626;
+        --danger-bg: #fee2e2;
+        --warn: #d97706;
+        --warn-bg: #fef3c7;
+        --info: #2563eb;
+        --info-bg: #dbeafe;
+        --ink: #1e293b;
+        --ink-2: #475569;
+        --ink-3: #94a3b8;
+        --line: #e2e8f0;
+        --surface: #ffffff;
+        --surface-2: #f8fafc;
+        --surface-3: #f1f5f9;
+        --radius: 16px;
+        --radius-sm: 10px;
+        --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+        --shadow: 0 4px 16px rgba(15, 23, 42, 0.07);
+        --shadow-lg: 0 16px 48px rgba(15, 23, 42, 0.14);
+        --ring: 0 0 0 3px rgba(99, 102, 241, 0.16);
+      }
+
       * {
         box-sizing: border-box;
         margin: 0;
         padding: 0;
       }
+
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+
       body {
         font-family:
           'Inter',
@@ -18,65 +51,130 @@
           BlinkMacSystemFont,
           'Segoe UI',
           Roboto,
+          'Helvetica Neue',
+          Arial,
           sans-serif;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: #333;
+        background:
+          radial-gradient(1000px 500px at 90% -10%, rgba(124, 58, 237, 0.09), transparent 60%),
+          radial-gradient(800px 400px at -10% 10%, rgba(79, 70, 229, 0.08), transparent 60%),
+          #f4f5fb;
+        color: var(--ink);
         min-height: 100vh;
         display: flex;
         flex-direction: column;
+        line-height: 1.55;
       }
+
+      /* ---------- Header ---------- */
       header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        background:
+          radial-gradient(900px 300px at 15% -60%, rgba(147, 51, 234, 0.35), transparent 60%),
+          linear-gradient(120deg, #0f172a 0%, #1e1b4b 45%, #312e81 100%);
         color: #fff;
-        padding: 28px 20px 22px;
-        text-align: center;
+        padding: 30px 20px 26px;
         position: relative;
         overflow: hidden;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
       }
-      header::before {
+      header::after {
         content: '';
         position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-        background-size: 30px 30px;
+        inset: 0;
+        background-image:
+          radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+        background-size: 26px 26px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.8), transparent);
         pointer-events: none;
       }
+      .header-inner {
+        position: relative;
+        z-index: 1;
+        max-width: 1000px;
+        margin: 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .header-brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .header-logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--brand-2), var(--brand-3));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.3rem;
+        font-weight: 800;
+        box-shadow: 0 6px 18px rgba(147, 51, 234, 0.4);
+        flex-shrink: 0;
+      }
       header h1 {
-        font-size: 1.6rem;
+        font-size: 1.35rem;
         font-weight: 700;
-        letter-spacing: -0.5px;
+        letter-spacing: -0.3px;
       }
       header p {
-        font-size: 0.9rem;
-        opacity: 0.75;
-        margin-top: 4px;
+        font-size: 0.82rem;
+        opacity: 0.7;
+        margin-top: 2px;
       }
+      .header-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 0.78rem;
+        font-weight: 500;
+        backdrop-filter: blur(6px);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #34d399;
+        box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.25);
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.25);
+        }
+        50% {
+          box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.12);
+        }
+      }
+
+      /* ---------- Layout ---------- */
       main {
         flex: 1;
-        max-width: 960px;
-        margin: 28px auto;
+        max-width: 1000px;
+        margin: 24px auto;
         width: 100%;
         padding: 0 16px;
       }
       .card {
-        background: #fff;
-        border-radius: 14px;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        background: var(--surface);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
         margin-bottom: 20px;
         overflow: hidden;
-        border: 1px solid rgba(0, 0, 0, 0.04);
-        transition: box-shadow 0.2s;
-      }
-      .card:hover {
-        box-shadow: 0 6px 28px rgba(0, 0, 0, 0.12);
+        border: 1px solid rgba(15, 23, 42, 0.04);
       }
       .card-header {
-        padding: 16px 20px;
-        border-bottom: 1px solid #f0f0f0;
-        font-weight: 600;
+        padding: 16px 22px;
+        border-bottom: 1px solid var(--line);
+        font-weight: 650;
         font-size: 0.95rem;
         display: flex;
         align-items: center;
@@ -85,124 +183,179 @@
         gap: 8px;
       }
       .card-body {
-        padding: 20px;
+        padding: 22px;
       }
+
+      /* ---------- Tabs (segmented) ---------- */
       .tabs {
         display: flex;
-        border-bottom: 2px solid #eef0f4;
-        background: #fafbfc;
-        border-radius: 14px 14px 0 0;
+        gap: 6px;
+        padding: 12px 16px;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--line);
+        border-radius: var(--radius) var(--radius) 0 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .tabs::-webkit-scrollbar {
+        display: none;
       }
       .tab {
         flex: 1;
-        padding: 14px 12px;
+        min-width: max-content;
+        padding: 10px 18px;
         text-align: center;
         cursor: pointer;
-        font-weight: 500;
-        font-size: 0.9rem;
-        color: #888;
-        transition: all 0.25s;
-        border-bottom: 2.5px solid transparent;
-        margin-bottom: -2px;
+        font-weight: 550;
+        font-size: 0.86rem;
+        color: var(--ink-3);
+        border-radius: var(--radius-sm);
+        border: 1px solid transparent;
+        transition: all 0.22s ease;
         user-select: none;
-        letter-spacing: 0.3px;
+        white-space: nowrap;
       }
       .tab:hover {
-        color: #555;
-        background: rgba(0, 0, 0, 0.02);
+        color: var(--ink-2);
+        background: rgba(15, 23, 42, 0.04);
       }
       .tab.active {
-        color: #667eea;
-        border-bottom-color: #667eea;
-        background: #fff;
+        color: var(--brand-1);
+        background: var(--surface);
+        border-color: var(--line);
+        box-shadow: var(--shadow-sm);
+        font-weight: 650;
       }
       .tab-content {
         display: none;
       }
       .tab-content.active {
         display: block;
+        animation: fadeIn 0.25s ease;
       }
+
+      /* ---------- Forms ---------- */
       .form-group {
         margin-bottom: 16px;
       }
       label {
         display: block;
-        font-weight: 500;
+        font-weight: 550;
         margin-bottom: 6px;
-        font-size: 0.85rem;
-        color: #555;
+        font-size: 0.84rem;
+        color: var(--ink-2);
       }
       textarea,
       input[type='file'] {
         width: 100%;
         padding: 11px 14px;
-        border: 1.5px solid #e0e3e8;
-        border-radius: 10px;
+        border: 1.5px solid var(--line);
+        border-radius: var(--radius-sm);
         font-size: 0.9rem;
         outline: none;
         transition:
-          border 0.2s,
+          border-color 0.2s,
           box-shadow 0.2s;
         font-family: inherit;
-        background: #fafbfc;
+        background: var(--surface-2);
+        color: var(--ink);
+      }
+      textarea:hover,
+      input[type='file']:hover {
+        border-color: #c7d2fe;
       }
       textarea:focus {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-        background: #fff;
+        border-color: var(--accent);
+        box-shadow: var(--ring);
+        background: var(--surface);
       }
       textarea {
         resize: vertical;
         min-height: 100px;
       }
+      input[type='file'] {
+        cursor: pointer;
+      }
+      .help-text {
+        font-size: 0.8rem;
+        color: var(--ink-3);
+        margin-top: 4px;
+      }
+      .batch-hint {
+        background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+        padding: 11px 15px;
+        border-radius: var(--radius-sm);
+        font-size: 0.82rem;
+        color: var(--brand-1);
+        margin-bottom: 16px;
+        border: 1px solid #e0e7ff;
+        line-height: 1.55;
+      }
+
+      /* ---------- Buttons ---------- */
       .btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 6px;
+        gap: 7px;
         padding: 10px 22px;
         border: none;
-        border-radius: 10px;
+        border-radius: var(--radius-sm);
         font-size: 0.88rem;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.2s;
-        letter-spacing: 0.2px;
+        transition:
+          transform 0.15s,
+          box-shadow 0.2s,
+          background 0.2s,
+          opacity 0.2s;
+        letter-spacing: 0.1px;
         white-space: nowrap;
+        font-family: inherit;
+      }
+      .btn:active {
+        transform: scale(0.98);
       }
       .btn-primary {
-        background: linear-gradient(135deg, #667eea, #764ba2);
+        background: linear-gradient(135deg, var(--brand-1), var(--brand-2));
         color: #fff;
-        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+        box-shadow: 0 3px 10px rgba(79, 70, 229, 0.32);
       }
       .btn-primary:hover {
         transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+        box-shadow: 0 6px 18px rgba(79, 70, 229, 0.4);
       }
       .btn-primary:disabled {
-        opacity: 0.6;
+        opacity: 0.55;
         cursor: not-allowed;
         transform: none;
         box-shadow: none;
       }
       .btn-success {
-        background: linear-gradient(135deg, #11998e, #38ef7d);
+        background: linear-gradient(135deg, #059669, #10b981);
         color: #fff;
-        box-shadow: 0 2px 8px rgba(56, 239, 125, 0.3);
+        box-shadow: 0 3px 10px rgba(16, 185, 129, 0.3);
       }
       .btn-success:hover {
         transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(56, 239, 125, 0.4);
+        box-shadow: 0 6px 18px rgba(16, 185, 129, 0.38);
       }
       .btn-outline {
-        background: #fff;
-        color: #555;
-        border: 1.5px solid #e0e3e8;
+        background: var(--surface);
+        color: var(--ink-2);
+        border: 1.5px solid var(--line);
       }
       .btn-outline:hover {
-        border-color: #667eea;
-        color: #667eea;
-        background: #f8f9ff;
+        border-color: var(--accent);
+        color: var(--brand-1);
+        background: #f5f6ff;
+      }
+      .btn-danger-soft {
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+      .btn-danger-soft:hover {
+        background: #fecaca;
       }
       .btn-sm {
         padding: 7px 16px;
@@ -212,13 +365,26 @@
       .btn-xs {
         padding: 5px 12px;
         font-size: 0.76rem;
-        border-radius: 6px;
+        border-radius: 7px;
       }
+      .btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn.loading .spinner {
+        display: inline-block;
+      }
+      .btn.loading .btn-text {
+        display: none;
+      }
+
+      /* ---------- Spinner & Progress ---------- */
       .spinner {
         display: none;
         width: 18px;
         height: 18px;
-        border: 2px solid rgba(255, 255, 255, 0.25);
+        border: 2px solid rgba(255, 255, 255, 0.3);
         border-top-color: #fff;
         border-radius: 50%;
         animation: spin 0.6s linear infinite;
@@ -229,50 +395,27 @@
           transform: rotate(360deg);
         }
       }
-      .btn.loading .spinner {
-        display: inline-block;
-      }
-      .btn.loading .btn-text {
-        display: none;
-      }
-      footer {
-        text-align: center;
-        padding: 20px;
-        color: rgba(255, 255, 255, 0.5);
-        font-size: 0.78rem;
-      }
-      .error-msg {
-        background: #fff0f0;
-        color: #c0392b;
-        padding: 12px 16px;
-        border-radius: 10px;
-        margin-top: 12px;
-        display: none;
-        border: 1px solid #fdd;
-      }
-      .error-msg.show {
-        display: block;
-      }
       .loading-bar {
         display: none;
         align-items: center;
-        gap: 10px;
-        color: #666;
+        gap: 12px;
+        color: var(--ink-2);
         font-size: 0.85rem;
-        margin-top: 16px;
+        margin-top: 4px;
         padding: 14px 16px;
-        background: #f8f9ff;
-        border-radius: 10px;
-        border: 1px solid #eef0f4;
+        background: linear-gradient(135deg, #eef2ff, #faf5ff);
+        border-radius: var(--radius-sm);
+        border: 1px solid #e0e7ff;
       }
       .loading-bar.show {
         display: flex;
+        animation: fadeIn 0.25s ease;
       }
       .loading-bar .spinner-dark {
-        width: 18px;
-        height: 18px;
-        border: 2.5px solid rgba(102, 126, 234, 0.15);
-        border-top-color: #667eea;
+        width: 20px;
+        height: 20px;
+        border: 2.5px solid rgba(99, 102, 241, 0.2);
+        border-top-color: var(--brand-1);
         border-radius: 50%;
         animation: spin 0.6s linear infinite;
         flex-shrink: 0;
@@ -281,67 +424,192 @@
         display: flex;
         flex-direction: column;
         gap: 2px;
+        flex: 1;
+        min-width: 0;
       }
       .progress-text .title {
-        font-weight: 600;
+        font-weight: 650;
       }
       .progress-text .sub {
-        font-size: 0.8rem;
-        color: #999;
+        font-size: 0.78rem;
+        color: var(--ink-3);
       }
       .progress-track {
         width: 100%;
-        height: 6px;
-        background: #eef0f4;
-        border-radius: 3px;
+        height: 7px;
+        background: rgba(99, 102, 241, 0.12);
+        border-radius: 4px;
         overflow: hidden;
-        margin-top: 6px;
+        margin-top: 8px;
         flex: 0 0 100%;
       }
       .progress-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, #667eea, #764ba2);
-        border-radius: 3px;
+        background: linear-gradient(90deg, var(--brand-1), var(--brand-3));
+        border-radius: 4px;
         transition: width 0.3s ease;
       }
-      .help-text {
-        font-size: 0.8rem;
-        color: #999;
-        margin-top: 4px;
-      }
-      .batch-hint {
-        background: linear-gradient(135deg, #f5f7ff, #eef0ff);
-        padding: 10px 14px;
-        border-radius: 10px;
-        font-size: 0.82rem;
-        color: #667eea;
-        margin-bottom: 14px;
-        border: 1px solid #e0e5ff;
+      .pct-chip {
+        background: var(--surface);
+        border: 1px solid #e0e7ff;
+        color: var(--brand-1);
+        font-weight: 700;
+        font-size: 0.78rem;
+        border-radius: 999px;
+        padding: 3px 10px;
+        white-space: nowrap;
       }
 
-      /* Result list */
+      /* ---------- JDIH ---------- */
+      .jdih-status-card {
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+      .jdih-status-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      .jdih-status-head .name {
+        font-weight: 650;
+        font-size: 0.9rem;
+        word-break: break-all;
+      }
+      .jdih-badge-running,
+      .jdih-badge-stopping {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 3px 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #fff;
+      }
+      .jdih-badge-running {
+        background: var(--success);
+      }
+      .jdih-badge-stopping {
+        background: var(--warn);
+      }
+      .jdih-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+        gap: 8px;
+      }
+      .jdih-stat {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-align: center;
+      }
+      .jdih-stat .num {
+        font-size: 1.15rem;
+        font-weight: 750;
+        letter-spacing: -0.3px;
+      }
+      .jdih-stat .lbl {
+        font-size: 0.66rem;
+        color: var(--ink-3);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        margin-top: 1px;
+      }
+      .jdih-warn {
+        background: var(--warn-bg);
+        border: 1px solid #fcd34d;
+        color: #92400e;
+        padding: 12px 14px;
+        border-radius: var(--radius-sm);
+        line-height: 1.6;
+      }
+      .jdih-info {
+        background: var(--info-bg);
+        border: 1px solid #bfdbfe;
+        color: #1e40af;
+        padding: 12px 14px;
+        border-radius: var(--radius-sm);
+        line-height: 1.6;
+      }
+      .jdih-ok {
+        background: var(--success-bg);
+        border: 1px solid #6ee7b7;
+        color: #065f46;
+        padding: 12px 14px;
+        border-radius: var(--radius-sm);
+        line-height: 1.6;
+        word-break: break-all;
+      }
+      .jdih-err {
+        background: var(--danger-bg);
+        border: 1px solid #fca5a5;
+        color: #991b1b;
+        padding: 12px 14px;
+        border-radius: var(--radius-sm);
+        line-height: 1.6;
+        word-break: break-all;
+      }
+      .jdih-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+      .jdih-result {
+        font-size: 0.88rem;
+      }
+      .jdih-sample {
+        margin-top: 10px;
+        background: var(--surface);
+        border: 1px solid #a7f3d0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
+        font-size: 0.74rem;
+        line-height: 1.7;
+        max-height: 220px;
+        overflow-y: auto;
+        word-break: break-all;
+      }
+
+      /* ---------- Result list ---------- */
       #resultList {
         display: none;
       }
       #resultList.show {
         display: block;
+        animation: fadeIn 0.3s ease;
       }
       .result-item {
-        border: 1px solid #eef0f4;
-        border-radius: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
         margin-bottom: 12px;
         overflow: hidden;
-        transition: box-shadow 0.2s;
+        background: var(--surface);
+        transition:
+          box-shadow 0.2s,
+          border-color 0.2s;
       }
       .result-item:hover {
-        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+        box-shadow: var(--shadow);
+        border-color: #dbe3f0;
       }
       .result-item.success {
-        border-left: 4px solid #11998e;
+        border-left: 4px solid var(--success);
       }
       .result-item.fail {
-        border-left: 4px solid #e74c3c;
+        border-left: 4px solid var(--danger);
+      }
+      .result-item.stop {
+        border-left: 4px solid var(--warn);
       }
       .result-header {
         display: flex;
@@ -353,11 +621,11 @@
         transition: background 0.15s;
       }
       .result-header:hover {
-        background: #fafbfc;
+        background: var(--surface-2);
       }
       .result-header .status-icon {
-        font-size: 1.15rem;
-        width: 24px;
+        font-size: 1.2rem;
+        width: 26px;
         text-align: center;
         flex-shrink: 0;
       }
@@ -374,14 +642,14 @@
       }
       .result-header .file-info .meta {
         font-size: 0.78rem;
-        color: #999;
+        color: var(--ink-3);
         display: flex;
         gap: 6px;
         flex-wrap: wrap;
-        margin-top: 4px;
+        margin-top: 5px;
       }
       .result-header .expand-icon {
-        color: #ccc;
+        color: #cbd5e1;
         transition: transform 0.25s;
         font-size: 0.8rem;
         flex-shrink: 0;
@@ -395,11 +663,12 @@
       }
       .result-body.show {
         display: block;
+        animation: fadeIn 0.2s ease;
       }
       .result-body .text-output {
-        background: #f8f9fc;
-        border: 1px solid #eef0f4;
-        border-radius: 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
         padding: 14px;
         max-height: 350px;
         overflow-y: auto;
@@ -416,19 +685,59 @@
       }
       .result-body .error-detail {
         background: #fff5f5;
-        color: #c0392b;
+        color: var(--danger);
         padding: 12px 16px;
-        border-radius: 10px;
+        border-radius: var(--radius-sm);
         font-size: 0.85rem;
-        border: 1px solid #fdd;
+        border: 1px solid #fecaca;
       }
+      .result-body .stop-detail {
+        background: var(--warn-bg);
+        color: #92400e;
+        padding: 12px 16px;
+        border-radius: var(--radius-sm);
+        font-size: 0.85rem;
+        border: 1px solid #fcd34d;
+        line-height: 1.6;
+      }
+      .btn-save {
+        background: linear-gradient(135deg, #059669, #10b981);
+        color: #fff;
+        border: none;
+      }
+      .btn-save:hover {
+        opacity: 0.92;
+        transform: translateY(-1px);
+      }
+      .result-textarea {
+        width: 100%;
+        border: 1.5px solid var(--line);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
+        font-size: 0.82rem;
+        line-height: 1.6;
+        resize: vertical;
+        background: var(--surface-2);
+        box-sizing: border-box;
+        color: var(--ink);
+      }
+      .result-textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: var(--ring);
+        background: var(--surface);
+      }
+
+      /* ---------- Badges ---------- */
       .badge {
         padding: 3px 10px;
-        border-radius: 20px;
+        border-radius: 999px;
         font-size: 0.72rem;
         font-weight: 600;
         display: inline-block;
         letter-spacing: 0.2px;
+        white-space: nowrap;
       }
       .badge-text {
         background: linear-gradient(135deg, #e8f0fe, #d4e4fc);
@@ -439,78 +748,101 @@
         color: #c5221f;
       }
       .badge-success {
-        background: linear-gradient(135deg, #e6f4ea, #c8e6c9);
-        color: #188038;
+        background: var(--success-bg);
+        color: #047857;
       }
       .badge-skip {
         background: linear-gradient(135deg, #fef7e0, #ffecb3);
-        color: #ea8600;
+        color: #b45309;
       }
       .badge-fail {
-        background: linear-gradient(135deg, #fce8e6, #f8d7da);
-        color: #c5221f;
+        background: var(--danger-bg);
+        color: #b91c1c;
       }
       .badge-rusak {
         background: linear-gradient(135deg, #fff3e0, #ffe0b2);
-        color: #e65100;
+        color: #c2410c;
       }
       .badge-kosong {
-        background: linear-gradient(135deg, #e3f2fd, #bbdefb);
-        color: #1565c0;
+        background: linear-gradient(135deg, #e0f2fe, #bae6fd);
+        color: #0369a1;
+      }
+      .badge-stop {
+        background: var(--warn-bg);
+        color: #b45309;
+      }
+      .badge-jdih {
+        background: linear-gradient(135deg, #ede9fe, #ddd6fe);
+        color: #6d28d9;
       }
       .badge-uploaded {
-        background: linear-gradient(135deg, #e8f5e9, #c8e6c9);
-        color: #2e7d32;
+        background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+        color: #047857;
       }
 
-      /* Activity Dashboard */
+      /* ---------- Aktivitas ---------- */
       .stats-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
         gap: 10px;
         margin-bottom: 18px;
       }
       .stat-card {
-        background: linear-gradient(135deg, #f8f9fc, #f0f1f5);
-        border-radius: 12px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
         padding: 16px 14px;
         text-align: center;
-        border-left: 4px solid #ccc;
-        transition: transform 0.2s;
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--sc, #cbd5e1);
       }
       .stat-card:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
+        box-shadow: var(--shadow);
       }
       .stat-card .num {
-        font-size: 1.6rem;
+        font-size: 1.7rem;
         font-weight: 800;
-        letter-spacing: -0.5px;
+        letter-spacing: -0.6px;
+        color: var(--ink);
       }
       .stat-card .lbl {
-        font-size: 0.72rem;
-        color: #888;
+        font-size: 0.7rem;
+        color: var(--ink-3);
         margin-top: 3px;
-        font-weight: 500;
+        font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
-      .stat-card.stat-total {
-        border-left-color: #667eea;
+      .stat-total {
+        --sc: linear-gradient(90deg, var(--brand-1), var(--brand-3));
       }
-      .stat-card.stat-success {
-        border-left-color: #11998e;
+      .stat-success {
+        --sc: linear-gradient(90deg, #059669, #34d399);
       }
-      .stat-card.stat-fail {
-        border-left-color: #e74c3c;
+      .stat-fail {
+        --sc: linear-gradient(90deg, #dc2626, #f87171);
       }
-      .stat-card.stat-rusak {
-        border-left-color: #e65100;
+      .stat-rusak {
+        --sc: linear-gradient(90deg, #ea580c, #fb923c);
       }
-      .stat-card.stat-kosong {
-        border-left-color: #1565c0;
+      .stat-kosong {
+        --sc: linear-gradient(90deg, #0284c7, #38bdf8);
       }
-      .stat-card.stat-uploaded {
-        border-left-color: #2e7d32;
+      .stat-uploaded {
+        --sc: linear-gradient(90deg, #047857, #10b981);
       }
       .charts-row {
         display: grid;
@@ -518,81 +850,81 @@
         gap: 16px;
         margin-bottom: 18px;
       }
-      @media (max-width: 600px) {
-        .charts-row {
-          grid-template-columns: 1fr;
-        }
-      }
       .chart-box {
-        background: #f8f9fc;
-        border-radius: 12px;
+        background: var(--surface-2);
+        border-radius: 14px;
         padding: 14px;
-        height: 210px;
+        height: 220px;
         position: relative;
-        border: 1px solid #eef0f4;
+        border: 1px solid var(--line);
       }
       .chart-box canvas {
-        max-height: 180px;
+        max-height: 190px;
       }
       .table-wrap {
         overflow-x: auto;
-        border-radius: 10px;
-        border: 1px solid #eef0f4;
+        border-radius: 12px;
+        border: 1px solid var(--line);
       }
       .table-wrap table {
         width: 100%;
         border-collapse: collapse;
         font-size: 0.82rem;
+        min-width: 640px;
       }
       .table-wrap th {
-        background: #f8f9fc;
+        background: var(--surface-2);
         text-align: left;
-        padding: 11px 14px;
-        font-weight: 600;
-        font-size: 0.76rem;
+        padding: 12px 14px;
+        font-weight: 650;
+        font-size: 0.73rem;
         text-transform: uppercase;
-        letter-spacing: 0.3px;
-        color: #888;
+        letter-spacing: 0.4px;
+        color: var(--ink-3);
         white-space: nowrap;
       }
       .table-wrap td {
         padding: 11px 14px;
-        border-bottom: 1px solid #f5f5f5;
+        border-bottom: 1px solid #f1f5f9;
         vertical-align: middle;
       }
       .table-wrap tr:last-child td {
         border-bottom: none;
       }
-      .table-wrap tr:hover td {
-        background: #fafbfc;
+      .table-wrap tbody tr {
+        transition: background 0.12s;
+      }
+      .table-wrap tbody tr:hover td {
+        background: #f8faff;
       }
       .table-wrap .btn-action {
-        padding: 4px 12px;
+        padding: 5px 13px;
         font-size: 0.74rem;
         border: none;
-        border-radius: 6px;
+        border-radius: 7px;
         cursor: pointer;
         margin-right: 4px;
         white-space: nowrap;
-        font-weight: 500;
-        transition: all 0.2s;
+        font-weight: 550;
+        transition: all 0.18s;
+        font-family: inherit;
       }
       .btn-detail {
-        background: #f0f1f5;
-        color: #555;
+        background: var(--surface-3);
+        color: var(--ink-2);
       }
       .btn-detail:hover {
-        background: #e5e7ed;
+        background: #e2e8f0;
       }
       .btn-danger {
-        background: #fee2e2;
-        color: #dc2626;
+        background: var(--danger-bg);
+        color: var(--danger);
       }
       .btn-danger:hover {
         background: #fecaca;
       }
       .btn-detail-green {
-        background: linear-gradient(135deg, #11998e, #38ef7d);
+        background: linear-gradient(135deg, #059669, #10b981);
         color: #fff;
       }
       .btn-detail-green:hover {
@@ -605,22 +937,32 @@
         gap: 8px;
         margin-bottom: 14px;
         flex-wrap: wrap;
-        padding: 10px 16px;
-        background: #f8f9ff;
-        border-radius: 10px;
-        border: 1px solid #eef0f4;
+        padding: 12px 16px;
+        background: var(--surface-2);
+        border-radius: 12px;
+        border: 1px solid var(--line);
       }
       .filter-date {
-        padding: 6px 10px;
-        border: 1.5px solid #e0e3e8;
+        padding: 7px 10px;
+        border: 1.5px solid var(--line);
         border-radius: 8px;
         font-size: 0.85rem;
         outline: none;
         font-family: inherit;
+        background: var(--surface);
+        color: var(--ink);
       }
       .filter-date:focus {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+        border-color: var(--accent);
+        box-shadow: var(--ring);
+      }
+      .row-between {
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
       }
       .dropdown-wrap {
         position: relative;
@@ -632,34 +974,38 @@
         top: 100%;
         right: 0;
         z-index: 50;
-        background: #fff;
-        border: 1px solid #e0e3e8;
-        border-radius: 10px;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-        min-width: 170px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: var(--shadow-lg);
+        min-width: 180px;
         overflow: hidden;
-        margin-top: 4px;
+        margin-top: 6px;
+        padding: 4px;
       }
       .dropdown-menu.show {
         display: block;
+        animation: fadeIn 0.15s ease;
       }
       .dropdown-item {
-        padding: 10px 16px;
+        padding: 9px 14px;
         cursor: pointer;
-        font-size: 0.88rem;
+        font-size: 0.86rem;
         transition: background 0.15s;
         white-space: nowrap;
+        border-radius: 8px;
       }
       .dropdown-item:hover {
         background: #f5f6ff;
+        color: var(--brand-1);
       }
 
-      /* Modal Detail */
+      /* ---------- Modal ---------- */
       .modal-overlay {
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        backdrop-filter: blur(4px);
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(5px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -676,19 +1022,19 @@
         }
       }
       .modal-box {
-        background: #fff;
-        border-radius: 14px;
-        max-width: 700px;
+        background: var(--surface);
+        border-radius: var(--radius);
+        max-width: 720px;
         width: 100%;
-        max-height: 85vh;
+        max-height: 86vh;
         display: flex;
         flex-direction: column;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        box-shadow: var(--shadow-lg);
         animation: slideUp 0.25s ease;
       }
       @keyframes slideUp {
         from {
-          transform: translateY(30px);
+          transform: translateY(28px);
           opacity: 0;
         }
         to {
@@ -701,25 +1047,33 @@
         align-items: center;
         justify-content: space-between;
         padding: 18px 22px;
-        border-bottom: 1px solid #eef0f4;
+        border-bottom: 1px solid var(--line);
         flex-shrink: 0;
+        gap: 12px;
       }
       .modal-header span {
         font-weight: 700;
         font-size: 1rem;
+        word-break: break-word;
       }
       .modal-close {
-        background: none;
+        background: var(--surface-3);
         border: none;
-        font-size: 1.5rem;
-        color: #999;
+        width: 32px;
+        height: 32px;
+        border-radius: 9px;
+        font-size: 1.1rem;
+        color: var(--ink-3);
         cursor: pointer;
         line-height: 1;
-        padding: 0 4px;
-        transition: color 0.15s;
+        transition:
+          color 0.15s,
+          background 0.15s;
+        flex-shrink: 0;
       }
       .modal-close:hover {
-        color: #333;
+        background: var(--danger-bg);
+        color: var(--danger);
       }
       .modal-body {
         padding: 20px 22px;
@@ -731,17 +1085,17 @@
         grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
         gap: 8px;
         margin-bottom: 18px;
-        background: #f8f9fc;
-        border-radius: 10px;
+        background: var(--surface-2);
+        border-radius: 12px;
         padding: 14px 16px;
-        border: 1px solid #eef0f4;
+        border: 1px solid var(--line);
       }
       .modal-meta-item {
         font-size: 0.8rem;
       }
       .modal-meta-item .label {
-        color: #999;
-        font-size: 0.7rem;
+        color: var(--ink-3);
+        font-size: 0.68rem;
         text-transform: uppercase;
         letter-spacing: 0.3px;
       }
@@ -753,12 +1107,12 @@
       .modal-body h4 {
         font-size: 0.85rem;
         margin-bottom: 8px;
-        color: #555;
+        color: var(--ink-2);
       }
       .modal-text {
-        background: #f8f9fc;
-        border: 1px solid #eef0f4;
-        border-radius: 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 12px;
         padding: 16px;
         max-height: 380px;
         overflow-y: auto;
@@ -768,66 +1122,140 @@
         line-height: 1.7;
       }
 
-      /* Upload all button in header */
-      .header-actions {
+      /* ---------- Toast ---------- */
+      .toast-wrap {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 2000;
         display: flex;
-        align-items: center;
-        gap: 8px;
+        flex-direction: column;
+        gap: 10px;
+        max-width: min(380px, calc(100vw - 40px));
       }
-      .btn-save {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: #fff;
-        border: none;
+      .toast {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--ink-3);
+        border-radius: 12px;
+        padding: 12px 16px;
+        box-shadow: var(--shadow-lg);
+        font-size: 0.84rem;
+        line-height: 1.5;
+        color: var(--ink);
+        animation: toastIn 0.28s cubic-bezier(0.21, 1.02, 0.73, 1);
+        word-break: break-word;
       }
-      .btn-save:hover {
-        opacity: 0.9;
-        transform: translateY(-1px);
+      .toast.out {
+        animation: toastOut 0.25s ease forwards;
       }
-      .result-textarea {
-        width: 100%;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        padding: 10px;
-        font-family: 'JetBrains Mono', 'Courier New', monospace;
-        font-size: 0.82rem;
-        line-height: 1.6;
-        resize: vertical;
-        background: #fafbfc;
-        box-sizing: border-box;
+      .toast-success {
+        border-left-color: var(--success);
       }
-      .result-textarea:focus {
-        outline: none;
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+      .toast-error {
+        border-left-color: var(--danger);
+      }
+      .toast-warn {
+        border-left-color: var(--warn);
+      }
+      .toast-info {
+        border-left-color: var(--info);
+      }
+      .toast .t-icon {
+        font-size: 1rem;
+        line-height: 1.4;
+        flex-shrink: 0;
+      }
+      @keyframes toastIn {
+        from {
+          opacity: 0;
+          transform: translateY(14px) scale(0.97);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+      @keyframes toastOut {
+        to {
+          opacity: 0;
+          transform: translateY(10px) scale(0.97);
+        }
       }
 
-      @media (max-width: 640px) {
-        header h1 {
-          font-size: 1.3rem;
-        }
-        header p {
-          font-size: 0.8rem;
-        }
-        main {
-          margin: 16px auto;
+      footer {
+        text-align: center;
+        padding: 22px;
+        color: var(--ink-3);
+        font-size: 0.76rem;
+      }
+
+      /* ---------- Responsive ---------- */
+      @media (max-width: 720px) {
+        .charts-row {
+          grid-template-columns: 1fr;
         }
         .card-body {
-          padding: 14px;
+          padding: 16px;
+        }
+        .header-inner {
+          justify-content: center;
+          text-align: center;
+        }
+        .header-pill {
+          display: none;
+        }
+        header {
+          padding: 22px 16px 20px;
         }
         .stats-row {
           grid-template-columns: repeat(3, 1fr);
         }
-        .header-actions {
-          width: 100%;
-          justify-content: flex-end;
+        .tabs {
+          padding: 10px 10px;
+        }
+        .tab {
+          padding: 9px 14px;
+          font-size: 0.82rem;
+        }
+      }
+      @media (max-width: 480px) {
+        .stats-row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .jdih-actions .btn {
+          flex: 1;
+        }
+        main {
+          padding: 0 10px;
+        }
+        .result-header {
+          padding: 12px 14px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
         }
       }
     </style>
   </head>
   <body>
     <header>
-      <h1>PDF to Text Converter</h1>
-      <p>Konversi PDF scan (gambar) menjadi teks &mdash; batch hingga 20 file</p>
+      <div class="header-inner">
+        <div class="header-brand">
+          <div class="header-logo">JD</div>
+          <div>
+            <h1>Konverter Dokumen JDIH</h1>
+            <p>Konversi PDF scan (gambar) menjadi teks &mdash; batch hingga 20 file</p>
+          </div>
+        </div>
+        <div class="header-pill"><span class="dot"></span> Server Online</div>
+      </div>
     </header>
 
     <main>
@@ -835,6 +1263,7 @@
         <div class="tabs">
           <div class="tab active" data-tab="url">URL PDF</div>
           <div class="tab" data-tab="upload">Upload File</div>
+          <div class="tab" data-tab="jdih">JDIH</div>
           <div class="tab" data-tab="aktivitas">Aktivitas</div>
         </div>
 
@@ -866,7 +1295,23 @@
               <span class="title" id="progressTitle">Memproses...</span>
               <span class="sub" id="progressSub">0 / 0 selesai (0%)</span>
             </div>
+            <span class="pct-chip" id="progressChip">0%</span>
             <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+          </div>
+
+          <div id="tab-jdih" class="tab-content">
+            <div class="batch-hint">
+              Ambil antrean peraturan yang belum dikonversi dari aplikasi JDIH (GET /api/ocr/peraturan),
+              proses OCR sampai antrean habis, lalu perbarui status di JDIH
+              (PATCH /api/ocr/peraturan/{id}/converted) — otomatis setelah dokumen disimpan ke database.
+            </div>
+            <div id="jdihStatusBox" class="jdih-status"></div>
+            <div class="jdih-actions">
+              <button class="btn btn-primary" id="btnJdihStart">Mulai Proses JDIH</button>
+              <button class="btn btn-danger-soft" id="btnJdihStop" disabled>Berhenti</button>
+              <button class="btn btn-outline" id="btnJdihTest">Uji Koneksi</button>
+            </div>
+            <div id="jdihResult" class="jdih-result"></div>
           </div>
 
           <div id="tab-aktivitas" class="tab-content">
@@ -876,30 +1321,21 @@
               <div class="chart-box"><canvas id="pieChart"></canvas></div>
             </div>
             <div class="filter-bar">
-              <label style="font-size: 0.85rem; font-weight: 500; color: #555">Dari:</label>
-              <input type="date" id="reportFrom" class="filter-date" onchange="updateDownloadLink()" />
-              <label style="font-size: 0.85rem; font-weight: 500; color: #555">Sampai:</label>
-              <input type="date" id="reportTo" class="filter-date" onchange="updateDownloadLink()" />
+              <label style="font-size: 0.84rem; font-weight: 550; color: var(--ink-2)">Dari:</label>
+              <input type="date" id="reportFrom" class="filter-date" />
+              <label style="font-size: 0.84rem; font-weight: 550; color: var(--ink-2)">Sampai:</label>
+              <input type="date" id="reportTo" class="filter-date" />
               <div class="dropdown-wrap">
-                <button class="btn btn-sm btn-primary" onclick="toggleDropdown(event)">Download ⬇</button>
+                <button class="btn btn-sm btn-primary" onclick="toggleDropdown(event)">Download &#8595;</button>
                 <div class="dropdown-menu" id="downloadDropdown">
-                  <div class="dropdown-item" onclick="downloadReport('csv')">📄 CSV (Excel)</div>
-                  <div class="dropdown-item" onclick="downloadReport('xlsx')">📊 XLSX + Grafik</div>
+                  <div class="dropdown-item" onclick="downloadReport('csv')">CSV (Excel)</div>
+                  <div class="dropdown-item" onclick="downloadReport('xlsx')">XLSX + Grafik</div>
                 </div>
               </div>
             </div>
-            <div
-              style="
-                margin-bottom: 12px;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                flex-wrap: wrap;
-                gap: 8px;
-              "
-            >
+            <div class="row-between">
               <strong>Riwayat Konversi</strong>
-              <button class="btn btn-sm" style="background: #f1f3f4" onclick="loadActivities()">Muat Ulang</button>
+              <button class="btn btn-sm btn-outline" onclick="loadActivities()">Muat Ulang</button>
             </div>
             <div class="table-wrap">
               <table>
@@ -917,7 +1353,7 @@
                 <tbody id="activityTableBody"></tbody>
               </table>
             </div>
-            <div id="activityEmpty" style="text-align: center; padding: 30px; color: #999; display: none">
+            <div id="activityEmpty" style="text-align: center; padding: 30px; color: var(--ink-3); display: none">
               Belum ada aktivitas konversi. Upload atau proses URL untuk memulai.
             </div>
           </div>
@@ -933,12 +1369,29 @@
       </div>
     </main>
 
-    <footer>PDF to Text Converter</footer>
+    <footer>Konverter Dokumen JDIH — PDF OCR</footer>
+
+    <div class="toast-wrap" id="toastWrap"></div>
 
     <script>
       const $ = (id) => document.getElementById(id);
 
-      // Tab switching
+      // ---------- Toast ----------
+      function toast(message, type) {
+        const wrap = $('toastWrap');
+        const icons = { success: '&#10003;', error: '&#10007;', warn: '&#9888;', info: '&#9432;' };
+        const el = document.createElement('div');
+        el.className = 'toast ' + (type ? 'toast-' + type : '');
+        el.innerHTML =
+          '<span class="t-icon">' + (icons[type] || '') + '</span><span>' + message + '</span>';
+        wrap.appendChild(el);
+        setTimeout(() => {
+          el.classList.add('out');
+          setTimeout(() => el.remove(), 300);
+        }, 4200);
+      }
+
+      // ---------- Tab switching ----------
       document.querySelectorAll('.tab').forEach((tab) => {
         tab.addEventListener('click', () => {
           document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
@@ -946,9 +1399,11 @@
           tab.classList.add('active');
           $(`tab-${tab.dataset.tab}`).classList.add('active');
           if (tab.dataset.tab === 'aktivitas') loadActivities();
+          if (tab.dataset.tab === 'jdih') loadJdihStatus();
         });
       });
 
+      // ---------- Progress ----------
       function showLoading(msg, pct) {
         let phase = msg;
         let progressPct = pct;
@@ -960,13 +1415,14 @@
           const loc = p.fileIndex ? `File ${p.fileIndex}/${p.totalFiles}` : '';
           const name = p.fileName ? ` — ${p.fileName}` : '';
           const page = p.page ? ` (halaman ${p.page}/${p.totalPages})` : '';
-          sub = `${loc}${name}${page} — ${Math.round(progressPct)}%`;
+          sub = `${loc}${name}${page}`;
         } else {
-          sub = `Memproses... ${Math.round(pct)}%`;
+          sub = 'Memproses...';
         }
         $('progressTitle').textContent = phase;
         $('progressSub').textContent = sub;
         $('progressFill').style.width = (progressPct || 0) + '%';
+        $('progressChip').textContent = Math.round(progressPct || 0) + '%';
         $('loadingBar').classList.add('show');
       }
 
@@ -974,6 +1430,7 @@
         $('progressTitle').textContent = 'Selesai';
         $('progressSub').textContent = `${total} file selesai diproses — semua hasil tersedia di bawah`;
         $('progressFill').style.width = '100%';
+        $('progressChip').textContent = '100%';
         $('loadingBar').classList.add('show');
         setTimeout(hideLoading, 4000);
       }
@@ -981,18 +1438,22 @@
       function hideLoading() {
         $('loadingBar').classList.remove('show');
         $('progressFill').style.width = '0%';
+        $('progressChip').textContent = '0%';
       }
 
+      // ---------- Status helpers ----------
       function statusIcon(status) {
         if (status === 'BERHASIL') return '&#9989;';
         if (status === 'RUSAK') return '&#9888;&#65039;';
         if (status === 'KOSONG') return '&#128196;';
+        if (status === 'DIHENTIKAN') return '&#128721;';
         return '&#10060;';
       }
       function statusBadge(status) {
         if (status === 'BERHASIL') return '<span class="badge badge-success">Berhasil</span>';
         if (status === 'RUSAK') return '<span class="badge badge-rusak">Rusak</span>';
         if (status === 'KOSONG') return '<span class="badge badge-kosong">Kosong</span>';
+        if (status === 'DIHENTIKAN') return '<span class="badge badge-stop">Dibatalkan</span>';
         return '<span class="badge badge-fail">Gagal</span>';
       }
 
@@ -1004,6 +1465,7 @@
         const st = data.status || (data.error ? 'GAGAL' : 'BERHASIL');
         const isBerhasil = st === 'BERHASIL';
         const isError = st === 'GAGAL' || st === 'RUSAK' || st === 'KOSONG';
+        const isStop = st === 'DIHENTIKAN';
         const name = data.originalName || data.url || `File ${index + 1}`;
         const fileName = data.outputFile || '';
 
@@ -1024,7 +1486,7 @@
                 : null,
           file_hash: data.fileHash || null,
         };
-        resultsStore.push({ meta, status: st, name, fileName });
+        resultsStore.push({ meta, status: st, name, fileName, jdihId: data.jdihId || null });
 
         const badges = [];
         badges.push(statusBadge(st));
@@ -1044,8 +1506,11 @@
         if (data.durasi) {
           badges.push(`<span class="badge">${data.durasi}</span>`);
         }
+        if (data.jdihId) {
+          badges.push(`<span class="badge badge-jdih">JDIH #${data.jdihId}</span>`);
+        }
 
-        const borderCls = isBerhasil ? 'success' : 'fail';
+        const borderCls = isBerhasil ? 'success' : isStop ? 'stop' : 'fail';
         const item = document.createElement('div');
         item.className = `result-item ${borderCls}`;
         item.dataset.index = index;
@@ -1070,6 +1535,11 @@
               ')">Simpan ke Database</button>',
             '</div>',
           ].join('\n');
+        } else if (isStop) {
+          bodyHtml =
+            '<div class="stop-detail">' +
+            escHtml(data.error || data.errorMessage || 'Proses dihentikan oleh pengguna') +
+            '<br><strong>Item tidak ditandai converted</strong> — dapat diproses ulang pada run berikutnya.</div>';
         } else if (isError) {
           bodyHtml =
             '<div class="error-detail">' + escHtml(data.errorMessage || data.error || 'Gagal diproses') + '</div>';
@@ -1118,7 +1588,7 @@
           const res = await fetch('/api/activities/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...entry.meta, text }),
+            body: JSON.stringify({ ...entry.meta, text, jdih_id: entry.jdihId || null }),
           });
           const data = await res.json();
           if (data.success) {
@@ -1126,13 +1596,18 @@
             btn.style.background = '#d1fae5';
             btn.style.color = '#065f46';
             btn.style.border = 'none';
-            btn.textContent = 'Tersimpan';
+            btn.textContent = data.jdihPatched ? 'Tersimpan ✓ (status JDIH ter-update)' : 'Tersimpan';
             btn.disabled = true;
+            toast('Tersimpan ke database', 'success');
+            if (data.jdihPatched) {
+              toast('Status JDIH #' + entry.jdihId + ' ter-update (converted)', 'info');
+            }
             if (typeof loadActivities === 'function') {
               setTimeout(() => loadActivities(), 500);
             }
           } else if (data.duplicate) {
             btn.textContent = 'Duplikat!';
+            toast('File sudah pernah disimpan sebelumnya', 'warn');
             setTimeout(() => {
               btn.innerHTML = 'Simpan ke Database';
               btn.disabled = false;
@@ -1140,8 +1615,7 @@
           } else {
             const errMsg = data.error || 'Gagal menyimpan';
             btn.textContent = 'Gagal!';
-            console.error('Save error:', errMsg);
-            alert('Gagal menyimpan: ' + errMsg);
+            toast('Gagal menyimpan: ' + errMsg, 'error');
             setTimeout(() => {
               btn.innerHTML = 'Simpan ke Database';
               btn.disabled = false;
@@ -1149,8 +1623,7 @@
           }
         } catch (e) {
           btn.textContent = 'Gagal!';
-          console.error('Save network error:', e);
-          alert('Gagal menyimpan (koneksi): ' + e.message);
+          toast('Gagal menyimpan (koneksi): ' + e.message, 'error');
           setTimeout(() => {
             btn.innerHTML = 'Simpan ke Database';
             btn.disabled = false;
@@ -1195,11 +1668,11 @@
           .map((u) => u.trim())
           .filter(Boolean);
         if (urls.length === 0) {
-          alert('Masukkan minimal 1 URL PDF');
+          toast('Masukkan minimal 1 URL PDF', 'warn');
           return;
         }
         if (urls.length > 20) {
-          alert('Maksimal 20 URL');
+          toast('Maksimal 20 URL', 'warn');
           return;
         }
 
@@ -1214,7 +1687,7 @@
           });
           if (!res.ok) {
             hideLoading();
-            alert('Gagal terhubung ke server');
+            toast('Gagal terhubung ke server', 'error');
             return;
           }
 
@@ -1227,18 +1700,18 @@
           });
         } catch (e) {
           hideLoading();
-          alert('Gagal terhubung ke server');
+          toast('Gagal terhubung ke server', 'error');
         }
       }
 
       async function processFiles() {
         const files = $('pdfFiles').files;
         if (files.length === 0) {
-          alert('Pilih minimal 1 file PDF');
+          toast('Pilih minimal 1 file PDF', 'warn');
           return;
         }
         if (files.length > 20) {
-          alert('Maksimal 20 file');
+          toast('Maksimal 20 file', 'warn');
           return;
         }
 
@@ -1254,7 +1727,7 @@
           const res = await fetch('/process-uploads', { method: 'POST', body: form });
           if (!res.ok) {
             hideLoading();
-            alert('Gagal terhubung ke server');
+            toast('Gagal terhubung ke server', 'error');
             return;
           }
 
@@ -1267,7 +1740,181 @@
           });
         } catch (e) {
           hideLoading();
-          alert('Gagal terhubung ke server');
+          toast('Gagal terhubung ke server', 'error');
+        }
+      }
+
+      // ---------- JDIH ----------
+      let jdihRunning = false;
+      let jdihPollTimer = null;
+
+      async function loadJdihStatus() {
+        try {
+          const res = await fetch('/api/jdih/status');
+          const s = await res.json();
+          jdihRunning = s.running;
+          const box = $('jdihStatusBox');
+          if (!s.enabled) {
+            box.innerHTML =
+              '<div class="jdih-warn">JDIH belum diaktifkan — isi JDIH_ENABLED=true, JDIH_BASE_URL, JDIH_USERNAME, ' +
+              'JDIH_PASSWORD di file .env lalu restart server.</div>';
+          } else {
+            const st = s.stats || {};
+            const runBadge = s.running
+              ? s.stopping
+                ? '<span class="jdih-badge-stopping">&#9209; Menghentikan...</span>'
+                : '<span class="jdih-badge-running">&#9679; Berjalan</span>'
+              : '';
+            box.innerHTML =
+              '<div class="jdih-status-card">' +
+              '<div class="jdih-status-head">' +
+              '<span class="name">' +
+              escHtml(s.baseUrl) +
+              '</span>' +
+              runBadge +
+              '</div>' +
+              '<div class="jdih-stats">' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.fetched || 0) +
+              '</div><div class="lbl">Diambil</div></div>' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.processed || 0) +
+              '</div><div class="lbl">Berhasil</div></div>' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.failed || 0) +
+              '</div><div class="lbl">Gagal</div></div>' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.patched || 0) +
+              '</div><div class="lbl">Di-PATCH</div></div>' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.pendingSave || 0) +
+              '</div><div class="lbl">Menunggu simpan</div></div>' +
+              '<div class="jdih-stat"><div class="num">' +
+              (st.cycles || 0) +
+              '</div><div class="lbl">Siklus</div></div>' +
+              '</div></div>';
+          }
+          $('btnJdihStart').disabled = s.running || !s.enabled;
+          $('btnJdihStop').disabled = !s.running;
+          if (s.running && !s.stopping) {
+            $('btnJdihStop').textContent = 'Berhenti';
+          } else if (s.stopping) {
+            $('btnJdihStop').textContent = 'Menghentikan...';
+          }
+
+          if (jdihPollTimer) clearTimeout(jdihPollTimer);
+          if (s.running) {
+            jdihPollTimer = setTimeout(loadJdihStatus, 3000);
+          }
+        } catch (e) {
+          console.error('Gagal muat status JDIH:', e);
+        }
+      }
+
+      async function testJdih() {
+        const btn = $('btnJdihTest');
+        btn.disabled = true;
+        btn.textContent = 'Menguji...';
+        try {
+          const res = await fetch('/api/jdih/test', { method: 'POST' });
+          const data = await res.json();
+          if (data.ok) {
+            const sample = (data.sample || [])
+              .map((it) => {
+                const u =
+                  it.url ||
+                  it.pdf_url ||
+                  it.url_file ||
+                  it.file_url ||
+                  it.file_path ||
+                  it.source_path ||
+                  it.file ||
+                  it.path ||
+                  '(tidak ada field URL)';
+                return 'id=' + it.id + ' converted=' + it.converted + ' url="' + escHtml(u) + '"';
+              })
+              .join('<br>') || '(antrean kosong)';
+            $('jdihResult').innerHTML =
+              '<div class="jdih-ok">Koneksi OK — ' +
+              (data.count || 0) +
+              ' item belum dikonversi.' +
+              '<div class="jdih-sample">' +
+              sample +
+              '</div></div>';
+          } else {
+            $('jdihResult').innerHTML = '<div class="jdih-err">Koneksi gagal: ' + escHtml(data.message) + '</div>';
+          }
+        } catch (e) {
+          $('jdihResult').innerHTML = '<div class="jdih-err">Gagal uji koneksi: ' + escHtml(e.message) + '</div>';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Uji Koneksi';
+        }
+      }
+
+      async function stopJdih() {
+        const btn = $('btnJdihStop');
+        btn.disabled = true;
+        btn.textContent = 'Menghentikan...';
+        try {
+          await fetch('/api/jdih/stop', { method: 'POST' });
+          toast('Perintah berhenti diterima — dokumen yang berjalan dibatalkan antar halaman', 'warn');
+          loadJdihStatus();
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = 'Berhenti';
+          toast('Gagal mengirim perintah berhenti', 'error');
+        }
+      }
+
+      async function startJdih() {
+        clearResults();
+        showLoading('Mengambil antrean JDIH...', 0);
+        try {
+          const res = await fetch('/api/jdih/start', { method: 'POST' });
+          if (!res.ok) {
+            hideLoading();
+            const err = await res.json().catch(() => ({}));
+            toast(err.error || 'Gagal terhubung ke server', 'error');
+            loadJdihStatus();
+            return;
+          }
+
+          let idx = 0;
+          await readSSEStream(res, {
+            progress: (p) => showLoading(p),
+            result: (r) => addResultItem(r, idx++),
+            error: (e) => addResultItem(e, idx++),
+            skip: () => {},
+            done: (d) => {
+              if (d && d.pending > 0) {
+                $('progressTitle').textContent = 'Menunggu disimpan';
+                $('progressSub').textContent =
+                  d.processed +
+                  ' berhasil, ' +
+                  d.pending +
+                  ' menunggu "Simpan ke Database" — status JDIH ter-update otomatis setelah simpan';
+              } else if (d && d.total === 0 && d.skipped > 0) {
+                $('progressTitle').textContent = 'Selesai';
+                $('progressSub').textContent =
+                  d.skipped + ' item dilewati (tidak memiliki field URL PDF di response JDIH) — cek tombol "Uji Koneksi"';
+              } else if (d && d.total === 0) {
+                $('progressTitle').textContent = 'Selesai';
+                $('progressSub').textContent = 'Antrean kosong — tidak ada peraturan baru yang belum dikonversi';
+              } else {
+                doneLoading(d ? d.total : resultsStore.length);
+              }
+              $('progressFill').style.width = '100%';
+              $('progressChip').textContent = '100%';
+              $('loadingBar').classList.add('show');
+              setTimeout(hideLoading, 4000);
+              loadJdihStatus();
+            },
+          });
+        } catch (e) {
+          hideLoading();
+          toast('Gagal terhubung ke server', 'error');
+          loadJdihStatus();
         }
       }
 
@@ -1303,7 +1950,13 @@
 
       $('btnUrls').addEventListener('click', processUrls);
       $('btnFiles').addEventListener('click', processFiles);
+      $('btnJdihStart').addEventListener('click', startJdih);
+      $('btnJdihStop').addEventListener('click', stopJdih);
+      $('btnJdihTest').addEventListener('click', testJdih);
 
+      loadJdihStatus();
+
+      // ---------- Aktivitas ----------
       let dailyChartInstance = null;
       let pieChartInstance = null;
 
@@ -1350,8 +2003,10 @@
               {
                 label: 'Konversi per hari',
                 data: labels.length ? counts : [0],
-                backgroundColor: '#1a73e8',
-                borderRadius: 4,
+                backgroundColor: 'rgba(99, 102, 241, 0.75)',
+                hoverBackgroundColor: '#4f46e5',
+                borderRadius: 6,
+                maxBarThickness: 42,
               },
             ],
           },
@@ -1360,15 +2015,15 @@
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
             scales: {
-              y: { beginAtZero: true, ticks: { stepSize: 1 } },
-              x: { ticks: { maxTicksLimit: 7 } },
+              y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: 'rgba(15,23,42,0.05)' } },
+              x: { ticks: { maxTicksLimit: 7 }, grid: { display: false } },
             },
           },
         });
 
         const pieLabels = ['Berhasil', 'Gagal', 'Rusak', 'Kosong'];
         const pieData = [s.berhasil || 0, s.gagal || 0, s.rusak || 0, s.kosong || 0];
-        const pieColors = ['#188038', '#c5221f', '#e65100', '#1565c0'];
+        const pieColors = ['#10b981', '#ef4444', '#f97316', '#3b82f6'];
 
         if (pieChartInstance) pieChartInstance.destroy();
         pieChartInstance = new Chart($('pieChart'), {
@@ -1379,7 +2034,8 @@
               {
                 data: pieData,
                 backgroundColor: pieColors,
-                borderWidth: 0,
+                borderWidth: 2,
+                borderColor: '#fff',
               },
             ],
           },
@@ -1409,11 +2065,12 @@
             const tgl = a.created_at
               ? new Date(a.created_at).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' })
               : '-';
+            const jdihBadge = a.jdih_id ? `<span class="badge badge-jdih" title="ID JDIH #${a.jdih_id}">JDIH #${a.jdih_id}</span>` : '';
             const detailBtn = `<button class="btn-action btn-detail" onclick="openDetailModal(${a.id})">Detail</button>`;
             const delBtn = `<button class="btn-action btn-danger" onclick="deleteActivity(${a.id}, this)">Hapus</button>`;
             return `<tr>
           <td style="white-space:nowrap">${tgl}</td>
-          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(a.file_name)}">${escHtml(a.file_name)}</td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtmlAttr(a.file_name)}">${escHtml(a.file_name)} ${jdihBadge}</td>
           <td>${a.file_type ? `<span class="badge ${a.file_type === 'TEXT' ? 'badge-text' : 'badge-scan'}">${a.file_type}</span>` : '-'}</td>
           <td>${statusBadge(a.status)}</td>
           <td>${a.page_count || 0}</td>
@@ -1429,13 +2086,13 @@
           const res = await fetch(`/api/activities/${id}`);
           const a = await res.json();
           if (!a) {
-            alert('Data tidak ditemukan');
+            toast('Data tidak ditemukan', 'warn');
             return;
           }
           const msg = `Detail Aktivitas\n\nFile: ${a.file_name}\nTipe: ${a.file_type || '-'}\nStatus: ${a.status}\nHalaman: ${a.page_count}\nDurasi: ${a.duration_seconds || '-'} dtk\nOCR: ${a.ocr_status || '-'}\nError: ${a.error_message || '-'}\nUploaded: ${a.text_uploaded ? 'Ya' : 'Belum'}`;
           alert(msg);
         } catch (e) {
-          alert('Gagal memuat detail');
+          toast('Gagal memuat detail', 'error');
         }
       }
 
@@ -1444,7 +2101,7 @@
           const res = await fetch(`/api/activities/${id}`);
           const a = await res.json();
           if (!a) {
-            alert('Data tidak ditemukan');
+            toast('Data tidak ditemukan', 'warn');
             return;
           }
 
@@ -1457,6 +2114,7 @@
           <div class="modal-meta-item"><div class="label">OCR</div><div class="value">${a.ocr_status || '-'}</div></div>
           <div class="modal-meta-item"><div class="label">Sumber</div><div class="value">${a.source_type === 'url' ? 'URL' : 'Upload'}</div></div>
           <div class="modal-meta-item"><div class="label">Upload ke DB</div><div class="value">${a.text_uploaded ? 'Ya' : 'Belum'}</div></div>
+          ${a.jdih_id ? `<div class="modal-meta-item"><div class="label">ID JDIH</div><div class="value"><span class="badge badge-jdih">#${a.jdih_id}</span></div></div>` : ''}
         `;
 
           if (a.status === 'BERHASIL' && a.output_text) {
@@ -1472,7 +2130,7 @@
           $('detailModal').style.display = 'flex';
           document.body.style.overflow = 'hidden';
         } catch (e) {
-          alert('Gagal memuat detail: ' + e.message);
+          toast('Gagal memuat detail: ' + e.message, 'error');
         }
       }
 
@@ -1484,14 +2142,20 @@
           const res = await fetch(`/api/activities/${id}`, { method: 'DELETE' });
           const data = await res.json();
           if (data.success) {
+            toast('Aktivitas berhasil dihapus', 'success');
+            if (data.jdihRequeued) {
+              toast('Item JDIH #' + data.jdihId + ' dikembalikan ke antrean — dapat dikonversi ulang', 'info');
+            } else if (data.jdihId) {
+              toast('Item JDIH #' + data.jdihId + ' tetap converted (re-queue gagal — periksa log server)', 'warn');
+            }
             loadActivities();
           } else {
-            alert('Gagal: ' + (data.error || 'Unknown error'));
+            toast('Gagal: ' + (data.error || 'Unknown error'), 'error');
             btn.disabled = false;
             btn.textContent = 'Hapus';
           }
         } catch (e) {
-          alert('Gagal terhubung ke server');
+          toast('Gagal terhubung ke server', 'error');
           btn.disabled = false;
           btn.textContent = 'Hapus';
         }
@@ -1524,8 +2188,6 @@
         if (to) url += '&to=' + to;
         window.open(url, '_blank');
       }
-
-      function updateDownloadLink() {}
 
       document.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && $('detailModal').style.display === 'flex') closeDetailModal();

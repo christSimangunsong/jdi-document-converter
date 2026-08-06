@@ -11,7 +11,7 @@ function encodeUrl(raw) {
   }
 }
 
-async function downloadPdf(url) {
+async function downloadPdf(url, options = {}) {
   const encoded = encodeUrl(url);
   const response = await withRetry(
     () =>
@@ -20,6 +20,7 @@ async function downloadPdf(url) {
         timeout: config.downloadTimeout,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          ...(options.headers || {}),
         },
       }),
     {

@@ -3,7 +3,8 @@ const logger = require('../../services/logger');
 const textExtractor = {
   async extract(pdfBuffer) {
     const pdfParse = require('pdf-parse');
-    const data = await pdfParse(pdfBuffer);
+    // pdf-parse (pdf.js v1.10.100) gagal dengan Buffer — butuh Uint8Array
+    const data = await pdfParse(new Uint8Array(pdfBuffer));
     const pages = this._splitPages(data.text || '', data.numpages || 1);
     return {
       pages,

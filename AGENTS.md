@@ -8,8 +8,10 @@
 
 | Entry | File | Reconstruction | DB save |
 |-------|------|----------------|---------|
-| CLI | `app.js` | Legacy (stops after `cleanText()`) | No |
-| Web | `server.js` | **Legacy** (`RECONSTRUCTION_ENABLED=false`, default) **or Pipeline** (`RECONSTRUCTION_ENABLED=true`) | `POST /api/activities/save` |
+| CLI | `app.js` | **Transcription** (v30.4, jika `TRANSCRIPTION_MODE=true`) **atau** Legacy | No |
+| Web | `server.js` | **Transcription** (v30.4, menang atas semua) **atau** Pipeline (`RECONSTRUCTION_ENABLED=true`) **atau** Legacy | `POST /api/activities/save` |
+
+**Transcription** (TRANSCRIPTION_MODE=true, default): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `convertPdfToImages→performOcrBlocks({transcription:true})`] → `runReconstruction({transcription:true})` → **berhenti di `ctx.lines`** → `.txt` polos per baris — tanpa heading markdown, tanpa grid ASCII, tanpa node BAB/Pasal; tabel sidecar table-aware tetap dipakai tapi output **plain** `sel1 | sel2`
 
 **Pipeline** (RECONSTRUCTION_ENABLED=true): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `convertPdfToImages→performOcrBlocks`] → `runReconstruction` → Markdown/HTML/JSON/Chunks
 
@@ -21,7 +23,7 @@
 |---------|----------|
 | `npm start` | Web server `localhost:3000` |
 | `npm run cli` | CLI batch from `data/links.json` |
-| `npm test` | `node --experimental-vm-modules test.js` (214 unit tests) |
+| `npm test` | `node --experimental-vm-modules test.js` (234 unit tests) |
 | `npm run sidecars` | Manual sidecar launcher: deskew (5002) + table-ocr (5003) via `scripts/sidecars.js` |
 | `npm run lint` | `eslint .` |
 | `npm run format` | `prettier --write "**/*.{js,json,css,html}"` |
@@ -42,6 +44,10 @@
 | POST | `/api/activities/save` | Save text + metadata to DB (JSON body); **file cache `output/*.txt` dihapus otomatis setelah sukses** (v29.5) |
 | DELETE | `/api/activities/:id` | Delete activity + `.txt` file |
 | GET | `/api/report/download` | `?from=&to=&format=xlsx\|csv` |
+| POST | `/api/jdih/start` | **SSE streaming** — loop GET→OCR→PATCH sampai antrean habis (events `progress`, `result`, `error`, `skip`, `done`) |
+| POST | `/api/jdih/stop` | Set `stopping` — **membatalkan dokumen yang berjalan antar halaman** (v30.3): throw `JDIH_ABORT` di `progress()` → item `DIHENTIKAN` tanpa PATCH |
+| GET | `/api/jdih/status` | `{enabled, baseUrl, running, stats}` |
+| POST | `/api/jdih/test` | Uji koneksi — response GET mentah + field URL terdeteksi |
 
 Batch routes use SSE streaming (events: `progress`, `result`, `error`, `done`). Single routes return JSON.
 
@@ -63,6 +69,7 @@ CJS project (`require`) with **3 dynamic ESM imports**. Do NOT convert to `requi
 - `imageConverter.js:79` — push `Canvas` directly, avoid `toBuffer()`
 - `paddleEngine.js:25` — `recognize()` accepts `Canvas` (which has `.toBuffer()`)
 - `imageConverter.js:11-18` — pdfjs-dist worker path resolved from `require.resolve('pdfjs-dist/package.json')` + `url.pathToFileURL()`
+- **pdf-parse v1.10.100 throws `bad XRef entry` with `Buffer`** — pass `new Uint8Array(buffer)` before `parse()` in `src/pdf/detector.js`, `src/pdf/textExtractor.js`, `src/reconstruction/analyzer/textExtractor.js` (v30.2; symptom: text PDF detected as SCAN → RUSAK)
 
 ## Status & Duplication
 
@@ -85,7 +92,7 @@ Pluggable architecture in `src/ocr/`:
 - `OCR_ENGINE=paddle|tesseract|surya|auto` in `.env` (default: `paddle`)
 - `auto` tries surya → tesseract → paddle fallback
 - Interface: `init()`, `recognize(image)`, `recognizePage(image)`, `recognizeBlocks(image)` (returns structured blocks with bbox+confidence), `destroy()`
-- `performOcrBlocks()` used by Reconstruction pipeline
+- `performOcrBlocks()` used by Reconstruction **dan Transcription** pipeline (`options.transcription` → tabel plain `sel1 | sel2`, default dari `config.transcription.enabled`)
 
 ## Sidecars
 
@@ -136,7 +143,9 @@ Steps configured via `OCR_PREPROCESS_STEPS=grayscale,denoise,threshold` (comma-s
 | DB | `DB_HOST/USER/PASSWORD/NAME/PORT` |
 | Sidecar | `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT` (120s), `SURYA_SERVICE_URL`, `DESKEW_SERVICE_URL`, **`SIDECAR_AUTOSTART`** (true), **`PYTHON_BIN`** (python) |
 | Pipeline | `RECONSTRUCTION_ENABLED` (false), `RECONSTRUCTION_DEBUG` (false), `RECONSTRUCTION_DEBUG_DIR` (`./debug`), `RECONSTRUCTION_CHUNK_SIZE` (1000), `RECONSTRUCTION_CHUNK_OVERLAP` (200), `RECONSTRUCTION_OUTPUT_FORMAT` (markdown) |
+| Transcription | `TRANSCRIPTION_MODE` (**true** — default, menang atas `RECONSTRUCTION_ENABLED`), `TRANSCRIPTION_TABLE` (`plain` — sel `sel1 | sel2` per baris tanpa border) |
 | Review | `REVIEW_ENABLED` (true), `REVIEW_MAX_ISSUES` (50) |
+| JDIH | `JDIH_ENABLED` (false), `JDIH_BASE_URL`, `JDIH_USERNAME`, `JDIH_PASSWORD`, `JDIH_BATCH_SIZE` (10), `JDIH_TIMEOUT` (30000) |
 | Output cleanup | `OUTPUT_CLEANUP_MAX_AGE_DAYS` (30), `OUTPUT_CLEANUP_INTERVAL_MS` (21600000) |
 
 - File name from URL: `extractFileNameFromUrl()` — last segment, strip `.pdf`, sanitize, max 200 chars. Spaces encoded `%20` then `decodeURIComponent()`
@@ -145,6 +154,8 @@ Steps configured via `OCR_PREPROCESS_STEPS=grayscale,denoise,threshold` (comma-s
 
 ## Notes
 
+- **Mode transkripsi (v30.4)**: `TRANSCRIPTION_MODE=true` (default) = **salinan teks setia** — pipeline berhenti di `ctx.lines` (setelah `cleanLines` + `filterPageChrome`), output `.txt` polos **per baris** tanpa heading markdown / grid ASCII / separator / node BAB-Pasal / `joinBrokenSentences` agresif. Semua perbaikan kualitas teks tetap aktif (preprocess, deskew, rotasi, quality gate, retry, wordFixer, ocrTypos, garbageTokens). **Tabel**: sidecar table-aware tetap dipakai, tapi output **plain** `sel1 | sel2` per baris (router `performOcrBlocks(images, onProgress, {transcription})` + `ocrGridCells`); `formatTableHtmlToText` (grid) tetap untuk reconstruction. Menang atas `RECONSTRUCTION_ENABLED` (branch pertama `processBuffer`); berlaku semua jalur (URL/upload/JDIH/CLI). `transcriptionGenerator.js`: per baris, trailing whitespace dibuang, baris kosong dipertahankan. **Jangan ubah ke struktur buatan tanpa user minta** — tujuan proyek = transkripsi akurat untuk JDIH. 234 unit tests.
+- **Integrasi JDIH OCR API (v30.2)**: aplikasi ini berperan sebagai **service OCR eksternal** JDIH. Sumber antrean via `GET /api/ocr/peraturan` (Basic Auth, batch ≤10, hanya `converted=0`) dan status dikembalikan via `PATCH /api/ocr/peraturan/{id}/converted`. Alur: tab JDIH UI → **Mulai Proses JDIH** → `runUntilEmpty()` (`src/services/jdihService.js`) loop GET→download→`processBuffer`→PATCH sampai antrean habis. BERHASIL **tampil di UI dulu** — PATCH dipanggil otomatis setelah "Simpan ke Database" sukses (`jdih_id` di body save → `markConvertedPending`); GAGAL/RUSAK/KOSONG **langsung di-PATCH** (PATCH semua status); item **DIHENTIKAN** (v30.3, stop responsif — `abortIfRequested()` dipanggil di `progress()` `server.js`, throw `JDIH_ABORT`) **tanpa PATCH** dan tanpa `seenIds` → bisa diproses ulang. Item tanpa field URL dilewati tanpa PATCH. **Re-queue on delete (v30.3)**: kolom `jdih_id` di `conversion_activities` (migrasi ALTER try/catch) disimpan saat save; `DELETE /api/activities/:id` → `markConvertedReset` → `PATCH {converted:0}` + hapus `seenIds`/`pendingSave` → item kembali ke antrean (response `{jdihRequeued}`; PATCH no-op aman bila ditolak). **Desain defensif field URL** (`jdihApiClient.resolvePdfUrl`): coba `url`, `pdf_url`, `url_file`, `file_url`, `source_path`, `file_path`, `file`, `path`; path relatif digabung `baseUrl`. **Terverifikasi live (jdih.dairikab.go.id)**: field asli = `url_file` (URL S3 publik tanpa auth, bisa berisi spasi — aman via WHATWG URL encoding); item tidak punya field `converted` (GET memang hanya mengembalikan yang pending); wrapper `{message, data}`. Dokumentasi JDIH hanya menunjukkan `{id, converted:0}` — verifikasi field asli via `POST /api/jdih/test`. `seenIds` persisten mencegah OCR ulang item yang menunggu disimpan (siklus berhenti, bukan loop tak terbatas). Basic Auth untuk download hanya dikirim bila host URL = host JDIH. File utama: `src/services/jdihApiClient.js` (klien murni), `src/services/jdihService.js` (orkestrator).
 - **Normalisasi typo OCR + footer chrome + fallback tabel (v30.1)**: (1) **`src/utils/ocrTypos.js`** (baru) — `fixOcrTypos(text)` dua lapis: aturan generik (kolon antar huruf "se:besar"→"sebesar" — "12:30"/"a.n." aman; strip prefiks `¿` U+00BF yang lolos filter textCleaner; prefiks `l`+konsonan hanya bila sisa ≥4 huruf ada di `ID_WORD_DICT` — "lkegiatan"→"kegiatan", "lampiran"/"lucu" aman; sufiks "nyva"→"nya" case-aware) + token map 12 entri case-preserving ("BAE"→"BAB", "Fasal"→"Pasal", "avat"→"ayat", "Nonor/Nornor"→"Nomor", "cengan"→"dengan", "Euvati"→"Bupati", "MEMUTUISKAN"→"MEMUTUSKAN", "YANCMAHA"→"YANG MAHA"); dipakai `garbageTokens.cleanLineText` (pipeline + sel tabel + legacy) dan `textCleaner.cleanText` SEBELUM `filterPageChrome` (agar "BAE III" terdeteksi `fixLegalHeadings`); (2) **footer chrome** (`outputCleaner.filterPageChrome` + legacy): zona footer 4 baris terbawah tiap halaman — `NIP_LINE_RE` (NIP+≥8 digit), `TTD_LINE_RE` ("ttd." murni), `SALINAN_SESUAI_RE`, `KEPALA_BAGIAN_HUKUM_RE` (full-line; "a.n. Kepala Bagian Hukum" konten aman); running header/footer kini 2 baris teratas/terbawah per halaman (footer berlapis); **dedup global heading preambul murni** ("Menimbang :"/"Mengingat :"/"MEMUTUSKAN :"/"Menetapkan :" — unik per dokumen, duplikat ghost layer dibuang; legacy per-baris tanpa info halaman); (3) **`tableFormatter.formatTableHtmlToText`**: gate `_tableGridUsable` (maxCols > 20; sel artefak grid ≥10%; variasi jumlah sel ≥3 nilai; baris 1-sel di samping ≥4-sel → grid korup) → fallback `formatTablePlainText` (sel `" | "` per baris, info tidak hilang); bersih → grid tetap; (4) **`TABLE_AWARE_MAX_PADDLEX_PAGES`** env (default 2, `0` = PaddleX nonaktif; config `parseInt`+NaN-check bukan `||` agar 0 dihormati; router pakai config, docker-compose pass-through). **Ghost layer** (dua dokumen saling selang kata dalam satu baris, hal 2-3 Perub No 8) tetap di luar scope — tidak bisa dipisah generik. 214 unit tests.
 - **Normalisasi kata terpecah + struktur hukum (v30)**: (1) **`src/utils/wordFixer.js`** (baru) — kamus ~300 kata hukum + stopword; `mergeSplitWords(text, docTokens?)` gabung "Dala m"→"Dalam", "kerjasa ma"→"kerjasama"; konservatif (kedua fragmen huruf murni, gabungan ≥5 huruf, ada di kamus ATAU muncul sebagai token di dokumen yang sama; frasa sah "kerja sama"/"peraturan daerah" tidak digabung kecuali bentuk gabungan ada di dokumen); dipakai `garbageTokens.cleanLineText` (pipeline + legacy) dan `textCleaner.cleanText`; `countSplitWords` dipakai **gate retry router**: halaman diterima tapi ≥2 kata terpecah → 1× OCR ulang upscale 1.5×; (2) **`filterPageChrome(lines)`** (`outputCleaner.js`, dipakai pipeline setelah `cleanLines` + legacy `textCleaner`): nomor halaman murni ("2", "- 3 -", "·12·"), cap "SALINAN"/"SALINAN E3", fragmen cap "E3" hanya di baris pertama/terakhir tiap halaman; running header/footer ≥50% halaman dibuang; di legacy dijalankan SEBELUM `joinBrokenSentences` (kalau tidak chrome tergabung ke kalimat); (3) **`lineMerger._splitMultilineBlocks`** — blok whole-page ber-`\n` dipecah per baris (bbox offset Y, baris kosong dipertahankan → flush paragraf); sebelumnya `_toLine` meratakan `\n` → BAB/Pasal/Menimbang/footer menyatu → struktur hancur; (4) **`documentTreeBuilder._expandPreambleLines`** pecah "Menimbang : a. ...; b. ...", "MEMUTUSKAN : Menetapkan :" (hanya setelah ":"/";" — kalimat biasa aman); PASAL judul/isi menempel dipisah ("Pasal 1 Setiap orang..." → title+body); (5) **`markdownGenerator`** kini render body Pasal + isi preambul setelah ":" (`_legalRest`) — sebelumnya heading saja → isi HILANG; (6) **fix bug pre-existing `documentModel.js` Line constructor** (`blocks[0]` di param undefined → TypeError; dipakai `this.blocks`) — semua test async `new Line({text, order})` sebelumnya crash → rejected promise → **✓ palsu** (tidak pernah jalan); setelah fix test nyata 187 → **201 passed**.
 - **DB sumber utama, `output/` hanya cache (v29.5)**: file `.txt` ditulis otomatis saat BERHASIL (cache sesi; branch reconstruction dulu TIDAK menulis — fixed), lalu **dihapus setelah "Simpan ke Database"** (POST `/api/activities/save`); `GET /download/:file` fallback ke `output_text` via `activityLogger.getByFileName()` bila file tak ada; `cleanupOutputDir()` (startup + `setInterval` 6 jam) hapus `*.txt`/`*.md` yang sudah tersimpan di DB atau stale > `OUTPUT_CLEANUP_MAX_AGE_DAYS` (30), file <10 mnt dilewati (anti-race). **Progress SSE detail**: event `progress` = `{pct, fileIndex, totalFiles, fileName, phase, page, totalPages}`; UI menampilkan fase + file i/n + halaman dan "Selesai — N file" 4 dtk di akhir. **Monitoring**: logger winston dual-write — baca `logs/app.log` (jangan redirect stdout).

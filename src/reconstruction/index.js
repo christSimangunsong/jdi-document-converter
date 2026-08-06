@@ -15,6 +15,7 @@ function getPipeline() {
     chunkSize: reconstCfg.chunkSize || 1000,
     chunkOverlap: reconstCfg.chunkOverlap || 200,
     review: config.review || { enabled: true, maxIssues: 50 },
+    transcription: config.transcription || { enabled: false, table: 'plain' },
   });
   return _pipeline;
 }

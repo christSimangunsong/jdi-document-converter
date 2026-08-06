@@ -6,8 +6,10 @@ Instruksi ringkas untuk sesi OpenCode. Changelog/progres lengkap ada di `CHANGEL
 
 | Entry | File | Rekonstruksi | DB |
 |-------|------|---|---|
-| CLI | `app.js` | Legacy (`cleanText()` only) | No |
-| Web | `server.js` | Legacy (`RECONSTRUCTION_ENABLED=false`) **atau** Pipeline (`RECONSTRUCTION_ENABLED=true`) | `POST /api/activities/save` |
+| CLI | `app.js` | **Transcription** (`TRANSCRIPTION_MODE=true`) **atau** Legacy (`cleanText()` only) | No |
+| Web | `server.js` | **Transcription** (default, menang atas semua) **atau** Pipeline (`RECONSTRUCTION_ENABLED=true`) **atau** Legacy | `POST /api/activities/save` |
+
+**Transcription** (saat `TRANSCRIPTION_MODE=true`, default): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `performOcrBlocks({transcription:true})`] → `runReconstruction({transcription:true})` → **berhenti di `ctx.lines`** → `.txt` polos per baris, tanpa heading markdown/grid ASCII/node BAB-Pasal; tabel plain `sel1 | sel2` (sidecar table-aware tetap dipakai).
 
 **Pipeline baru** (saat `RECONSTRUCTION_ENABLED=true`): `downloadPdf` → `detectPdfType` → [TEXT: `textExtractor` | SCAN: `renderPdfImagesWithTableBoost→performOcrBlocks`] → `runReconstruction` → output Markdown/HTML/JSON/Chunks.
 
@@ -19,7 +21,7 @@ Instruksi ringkas untuk sesi OpenCode. Changelog/progres lengkap ada di `CHANGEL
 |---|---|
 | `npm start` | Web server `localhost:3000` |
 | `npm run cli` | CLI dari `data/links.json` |
-| `npm test` | `node --experimental-vm-modules test.js` (214 tests) |
+| `npm test` | `node --experimental-vm-modules test.js` (234 tests) |
 | `npm run lint` | `eslint .` (2-space, single quotes) |
 | `npm run sidecars` | Manual launcher: deskew (5002) + table-ocr (5003) |
 | `npm run format` | `prettier --write "**/*.{js,json,css,html}"` |
@@ -79,8 +81,9 @@ Project CJS (`require`), **3 dynamic ESM imports** — jangan diubah ke `require
 
 ## Konfigurasi
 
-- `.env`: `OUTPUT_DIR`, `LOG_DIR`, `MAX_RETRIES`, `RETRY_DELAY_MS`, `DOWNLOAD_TIMEOUT`, `OCR_LANG`, `PDF_RENDER_SCALE`, `PORT`, `DB_HOST/USER/PASSWORD/NAME/PORT`, `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT`, `SURYA_SERVICE_URL`, `DESKEW_SERVICE_URL`, `DESKEW_ENGINE`, `DESKEW_MIN_CONFIDENCE`, `DESKEW_PERSPECTIVE`, `DESKEW_MAX_ANGLE`, `OCR_ENGINE`, `OCR_PREPROCESS`, `OCR_PREPROCESS_STEPS`, `OCR_MIN_CONFIDENCE`, `OCR_MAX_CONFIDENCE_RETRIES`, `OCR_ENGINE_FALLBACK`, `OCR_QUALITY_GATE`, `OCR_MIN_WORD_COUNT`, `OCR_MAX_GARBAGE_RATIO`, `PROJECTION_*`, `OSD_*`, `PERSPECTIVE_*`, `TABLE_*` (termasuk `TABLE_RENDER_SCALE`), `RECONSTRUCTION_ENABLED`, `RECONSTRUCTION_DEBUG`, `RECONSTRUCTION_DEBUG_DIR`, `RECONSTRUCTION_CHUNK_SIZE`, `RECONSTRUCTION_CHUNK_OVERLAP`, `RECONSTRUCTION_OUTPUT_FORMAT`, `REVIEW_ENABLED`, `REVIEW_MAX_ISSUES`
+- `.env`: `OUTPUT_DIR`, `LOG_DIR`, `MAX_RETRIES`, `RETRY_DELAY_MS`, `DOWNLOAD_TIMEOUT`, `OCR_LANG`, `PDF_RENDER_SCALE`, `PORT`, `DB_HOST/USER/PASSWORD/NAME/PORT`, `STRUCTURE_SERVICE_URL`, `SIDECAR_TIMEOUT`, `SURYA_SERVICE_URL`, `DESKEW_SERVICE_URL`, `DESKEW_ENGINE`, `DESKEW_MIN_CONFIDENCE`, `DESKEW_PERSPECTIVE`, `DESKEW_MAX_ANGLE`, `OCR_ENGINE`, `OCR_PREPROCESS`, `OCR_PREPROCESS_STEPS`, `OCR_MIN_CONFIDENCE`, `OCR_MAX_CONFIDENCE_RETRIES`, `OCR_ENGINE_FALLBACK`, `OCR_QUALITY_GATE`, `OCR_MIN_WORD_COUNT`, `OCR_MAX_GARBAGE_RATIO`, `PROJECTION_*`, `OSD_*`, `PERSPECTIVE_*`, `TABLE_*` (termasuk `TABLE_RENDER_SCALE`), `RECONSTRUCTION_ENABLED`, `RECONSTRUCTION_DEBUG`, `RECONSTRUCTION_DEBUG_DIR`, `RECONSTRUCTION_CHUNK_SIZE`, `RECONSTRUCTION_CHUNK_OVERLAP`, `RECONSTRUCTION_OUTPUT_FORMAT`, `TRANSCRIPTION_MODE` (**true** default, menang atas reconstruction), `TRANSCRIPTION_TABLE` (`plain`), `REVIEW_ENABLED`, `REVIEW_MAX_ISSUES`
 - `RECONSTRUCTION_ENABLED=false` secara default — backward compat
+- **Transkripsi (v30.4)**: `TRANSCRIPTION_MODE=true` (default) = salinan teks setia per baris tanpa struktur buatan (heading markdown/grid ASCII/node BAB-Pasal); tabel plain `sel1 | sel2`; semua perbaikan kualitas teks tetap aktif; menang atas reconstruction. Jangan ubah ke struktur buatan tanpa user minta.
 - Kualitas per halaman: `computeQualityScore` + `shouldAcceptPage` (`src/ocr/qualityMetrics.js`); kaskade engine per retry (`src/ocr/router.js`) — retry 1 = upscale 1.5×, retry 2 = upscale 3× + denoise, engine alternatif hanya di retry terakhir; halaman gagal diterima ditandai LOW QUALITY (teks tetap dipakai)
 - Deskew (`src/ocr/deskewRouter.js`): **OSD (0/90/180/270°) dulu** → Hough-lite pure-JS (±15°, 0.5°) → Hough sidecar OpenCV (±30°) → Projection profile (fallback); `DESKEW_ENGINE=auto|hough|tesseract|projection`; opsi `{skipOsd:true}` untuk fine-deskew saja; sidecar `sidecar/deskew.py` port 5002 (`DESKEW_SERVICE_URL`)
 - Render tabel: `renderPdfImagesWithTableBoost` (server.js) — pass 1 scale 1.0 → tiap halaman di-rectify dulu (correctOrientation + deskew `skipOsd`) → deteksi grid → halaman bertabel di-render ulang `TABLE_RENDER_SCALE` (3.0); region tabel di-OCR ulang via `tableRegionOcr.js` (`repairTableBlocks` pakai gambar ter-rectify)
@@ -106,6 +109,22 @@ Project CJS (`require`), **3 dynamic ESM imports** — jangan diubah ke `require
 | POST | `/api/activities/save` | Simpan text + metadata ke DB (body JSON) |
 | DELETE | `/api/activities/:id` | Hapus activity + file `.txt` |
 | GET | `/api/report/download` | Query `?from=&to=&format=xlsx\|csv` |
+| POST | `/api/jdih/start` | **SSE** loop GET→OCR→PATCH sampai antrean habis (events `progress`/`result`/`error`/`skip`/`done`) |
+| POST | `/api/jdih/stop` | Set `stopping` — batalkan dokumen berjalan antar halaman (item `DIHENTIKAN`, tanpa PATCH) |
+| GET | `/api/jdih/status` | `{enabled, baseUrl, running, stats}` |
+| POST | `/api/jdih/test` | Uji koneksi — response GET mentah + field URL terdeteksi |
+
+## Integrasi JDIH (v30.2)
+
+Service OCR eksternal JDIH: `GET /api/ocr/peraturan` (batch `converted=0`, Basic Auth) + `PATCH /api/ocr/peraturan/{id}/converted`. Orkestrator `src/services/jdihService.js`, klien `src/services/jdihApiClient.js`.
+
+- Tab **JDIH** di UI → "Mulai Proses JDIH" → `runUntilEmpty()` sampai antrean habis
+- BERHASIL tampil di UI dulu → PATCH otomatis setelah "Simpan ke Database" (`jdih_id` → `markConvertedPending`)
+- GAGAL/RUSAK/KOSONG langsung di-PATCH; item tanpa field URL dilewati tanpa PATCH
+- Stop responsif (v30.3): `JDIH_ABORT` di `progress()` → item `DIHENTIKAN` tanpa PATCH/seenIds → bisa diproses ulang
+- Re-queue on delete (v30.3): `DELETE /api/activities/:id` → `markConvertedReset` → PATCH `{converted:0}` + hapus seenIds (`jdih_id` disimpan di `conversion_activities` saat save)
+- Field URL defensif: `url`/`pdf_url`/`url_file`/`file_url`/`source_path`/`file_path`/`file`/`path` (relatif → gabung baseUrl)
+- Env: `JDIH_ENABLED`, `JDIH_BASE_URL`, `JDIH_USERNAME`, `JDIH_PASSWORD`, `JDIH_BATCH_SIZE` (10), `JDIH_TIMEOUT` (30000)
 
 ## Modular OCR Engine
 

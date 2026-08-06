@@ -6,7 +6,7 @@ const { computeQualityScore, computePageScore, shouldAcceptPage } = require('./q
 const { commonWordRatio } = require('../pdf/textLayerValidator');
 const { repairTableBlocks, detectWiredGridRegions, blockInRegion } = require('./tableRegionOcr');
 const { analyzeTables } = require('../services/tableAwareService');
-const { formatTableHtmlToText } = require('../utils/tableFormatter');
+const { formatTableHtmlToText, formatTablePlainText, parseTableHtml } = require('../utils/tableFormatter');
 const { PaddleEngine } = require('./engines/paddleEngine');
 const { TesseractEngine } = require('./engines/tesseractEngine');
 const { SuryaEngine } = require('./engines/suryaEngine');
@@ -981,7 +981,7 @@ async function performOcr(imageBuffers, onProgress) {
   return results;
 }
 
-async function performOcrBlocks(imageBuffers, onProgress) {
+async function performOcrBlocks(imageBuffers, onProgress, options = {}) {
   const results = [];
   const engCfg = getEngineConfig();
   const jobCache = [];
@@ -989,6 +989,12 @@ async function performOcrBlocks(imageBuffers, onProgress) {
   const perPage = [];
   const taRequests = [];
   let paddlexUsed = 0;
+  // (v30.4) Mode transkripsi: output tabel plain ("sel1 | sel2" per baris,
+  // tanpa grid ASCII). Default mengikuti config.transcription.enabled.
+  const transcription =
+    options.transcription !== undefined
+      ? options.transcription
+      : Boolean(config.transcription && config.transcription.enabled);
 
   for (let i = 0; i < imageBuffers.length; i++) {
     logger.info(`  OCR blocks halaman ${i + 1}/${imageBuffers.length}...`);
@@ -1046,7 +1052,11 @@ async function performOcrBlocks(imageBuffers, onProgress) {
         const tables = (taResults[k] && taResults[k].tables) || [];
         const newBlocks = [];
         for (const t of tables) {
-          const text = formatTableHtmlToText(t.html);
+          // (v30.4) Mode transkripsi: sel ditulis plain per baris tanpa
+          // border/wrapping ASCII; reconstruction tetap grid.
+          const text = transcription
+            ? formatTablePlainText(parseTableHtml(t.html))
+            : formatTableHtmlToText(t.html);
           if (!text.trim() || !t.bbox || t.bbox.length < 4) continue;
           const tb = {
             text,
