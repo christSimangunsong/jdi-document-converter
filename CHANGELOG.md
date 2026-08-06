@@ -5,6 +5,31 @@
 
 ---
 
+## Changelog — 2026-08-06 (v30.5)
+
+### ringkasan
+**Progress UI detail — user tahu sedang menunggu apa.** Tiga perbaikan: (1) **fix bug bar JDIH macet di ~1%**: `pct` pipeline (0-1) dikirim mentah ke UI (0-100 diharapkan) sehingga bar diam di 0-1% sepanjang proses dan lompat ke 100% hanya saat event `done` — kini dikalikan 100; (2) **fase & detail aktivitas berjalan**: event `progress` membawa `detail` (pesan per aktivitas) yang ditampilkan di baris baru bawah progress; (3) **fix bug tembusan options**: `src/ocr/engine.js` `performOcrBlocks` TIDAK meneruskan argumen `options` ke `ocrRouter.performOcrBlocks` (cuma 2 arg) — `transcription` & `onDetail` hilang saat dipanggil via `server.js` (selamat hanya karena fallback config); `onDetail` table-OCR sekarang benar-benar sampai ke sidecar client.
+
+### apa yang berubah
+
+| File | perubahan |
+|---|---|
+| `src/ocr/engine.js` | `performOcrBlocks(imageBuffers, onProgress, options)` — **options diteruskan ke router** (sebelumnya dibuang → `onDetail` & `transcription` dari server.js tidak pernah sampai) |
+| `src/services/tableAwareService.js` | `analyzeTables(pages, onDetail?)` — panggil `onDetail` per halaman: `Table-OCR halaman 3/19 (img2table) sedang berjalan...` → `selesai — N tabel ditemukan` / `gagal — dilewati`; label engine: `PaddleX (grid wired — bisa 1-9 mnt)` vs `img2table` |
+| `src/ocr/router.js` | `performOcrBlocks` options `onDetail`; sebelum `analyzeTables`: `Table-OCR dimulai: N halaman (x PaddleX)`; setelah: `Table-OCR selesai — membandingkan hasil dengan blok OCR...` |
+| `server.js` | `progress()` lacak `lastPct`/`lastPhase` — event detail (`progress(null, null, {detail})`) mengirim pct/phase terakhir + `detail`; branch transcription & reconstruction pass `onDetail` ke `performOcrBlocks`; batch SSE `/process-urls` & `/process-uploads` teruskan `detail` di extra |
+| `src/services/jdihService.js` | callback progress JDIH: `pct ×100` (+round); teruskan `detail`; fase baru `[JDIH] Mengunduh PDF` (2%) & `[JDIH] Memeriksa file` (4%) sebelum `processBuffer` |
+| `public/index.html` | elemen baru `#progressDetail` (baris kecil biru, `.detail.show`) di bawah `progressSub` — tampil hanya saat ada `detail`; normalisasi pengaman `pct ≤ 1 → ×100`; nama file tanpa " — " kosong saat tanpa `fileIndex`; detail dibersihkan di `doneLoading`/`hideLoading`/handler done JDIH |
+
+### hasil verifikasi (live, Perbub No 4/2020 SCAN 19 hlm + table-OCR)
+
+- `/process-urls` (SSE): **74 event progress, 40 berisi detail**, pct 0→100 natural (tidak pernah turun), fase: Menunggu antrian → Mengunduh PDF → Memeriksa file → Analisis PDF → Render halaman PDF → OCR halaman 1/19..19/19 → Menyusun teks transkripsi → Menganalisis dokumen... → ... → Menyiapkan output → Selesai → Menyimpan hasil
+- Detail live: `Table-OCR dimulai: 19 halaman (img2table)` → `Table-OCR halaman 1/19 (img2table) sedang berjalan...` → `selesai — 1 tabel ditemukan` dst.
+- UI: `#progressDetail` + CSS terdeteksi di HTML tersaji (HTTP 200)
+- `npm test` 234 passed / 0 failed; `npm run lint` 0 error (20 warning pre-existing)
+
+---
+
 ## Changelog — 2026-08-06 (v30.4)
 
 ### ringkasan

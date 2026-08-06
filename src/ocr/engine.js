@@ -24,8 +24,8 @@ function formatOcrResult(result) {
   return String(result.text || '');
 }
 
-async function performOcrBlocks(imageBuffers, onProgress) {
-  return ocrRouter.performOcrBlocks(imageBuffers, onProgress);
+async function performOcrBlocks(imageBuffers, onProgress, options) {
+  return ocrRouter.performOcrBlocks(imageBuffers, onProgress, options);
 }
 
 module.exports = { performOcr, performOcrBlocks, formatOcrResult };

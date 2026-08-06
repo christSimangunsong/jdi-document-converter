@@ -995,6 +995,9 @@ async function performOcrBlocks(imageBuffers, onProgress, options = {}) {
     options.transcription !== undefined
       ? options.transcription
       : Boolean(config.transcription && config.transcription.enabled);
+  // (v30.5) Pesan detail per aktivitas (table-OCR dll) — ditampilkan UI di
+  // bawah progress agar user tahu sedang menunggu apa.
+  const onDetail = typeof options.onDetail === 'function' ? options.onDetail : () => {};
 
   for (let i = 0; i < imageBuffers.length; i++) {
     logger.info(`  OCR blocks halaman ${i + 1}/${imageBuffers.length}...`);
@@ -1044,7 +1047,13 @@ async function performOcrBlocks(imageBuffers, onProgress, options = {}) {
   }
 
   if (taRequests.length > 0) {
-    const taResults = await analyzeTables(taRequests.map((r) => ({ image: r.image, engine: r.engine })));
+    const engines = taRequests.map((r) => r.engine);
+    const paddlexCount = engines.filter((e) => e === 'paddlex').length;
+    onDetail(
+      `Table-OCR dimulai: ${taRequests.length} halaman (${paddlexCount > 0 ? `${paddlexCount} PaddleX` : 'img2table'}) — mengganti blok OCR dalam region tabel`,
+    );
+    const taResults = await analyzeTables(taRequests.map((r) => ({ image: r.image, engine: r.engine })), onDetail);
+    onDetail('Table-OCR selesai — membandingkan hasil dengan blok OCR...');
     if (taResults) {
       for (let k = 0; k < taResults.length; k++) {
         const pageInfo = perPage[taRequests[k].pageIndex];

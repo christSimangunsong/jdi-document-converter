@@ -191,9 +191,16 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
   // Progress dengan fase (nama fase + halaman) — dikonsumsi batch SSE route.
   // Saat tombol Berhenti JDIH ditekan, callback ini melempar JDIH_ABORT agar
   // dokumen yang berjalan dihentikan di sela antar halaman/fase (v30.3).
+  // (v30.5) `detail` = pesan aktivitas berjalan (mis. "Table-OCR halaman 3/5
+  // (paddlex) sedang berjalan...") — pct/phase terakhir dipertahankan saat
+  // event detail dikirim tanpa nilai baru.
+  let lastPct = 0;
+  let lastPhase = '';
   const progress = (pct, phase, extra) => {
     jdihService.abortIfRequested();
-    if (onProgress) onProgress({ pct, phase, ...extra });
+    if (pct != null) lastPct = pct;
+    if (phase != null) lastPhase = phase;
+    if (onProgress) onProgress({ pct: lastPct, phase: lastPhase, ...extra });
   };
 
   try {
@@ -221,7 +228,12 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
             if (onProgress) {
               progress(0.1 + (page / total) * 0.4, `OCR halaman ${page}/${total}`, { page, totalPages: total });
             }
-          }, { transcription: true });
+          }, {
+            transcription: true,
+            onDetail: (detail) => {
+              if (onProgress) progress(null, null, { detail });
+            },
+          });
           result.ocrStatus = 'BERHASIL';
         }
         if (onProgress) progress(0.55, 'Menyusun teks transkripsi');
@@ -258,6 +270,10 @@ async function processBuffer(pdfBuffer, fileName, sourceInfo, onProgress) {
             if (onProgress) {
               progress(0.1 + (page / total) * 0.4, `OCR halaman ${page}/${total}`, { page, totalPages: total });
             }
+          }, {
+            onDetail: (detail) => {
+              if (onProgress) progress(null, null, { detail });
+            },
           });
           result.ocrStatus = 'BERHASIL';
         }
@@ -484,7 +500,11 @@ app.post('/process-urls', async (req, res) => {
               Math.min(Math.round(pct), Math.round(basePct + filePct)),
               typeof inner === 'object' && inner.phase ? inner.phase : undefined,
               typeof inner === 'object'
-                ? { page: inner.page, totalPages: inner.totalPages }
+                ? {
+                  page: inner.page,
+                  totalPages: inner.totalPages,
+                  detail: inner.detail,
+                }
                 : {},
             );
           },
@@ -615,7 +635,11 @@ app.post('/process-uploads', upload.array('pdf', 20), async (req, res) => {
               Math.min(Math.round(pct), Math.round(basePct + filePct)),
               typeof inner === 'object' && inner.phase ? inner.phase : undefined,
               typeof inner === 'object'
-                ? { page: inner.page, totalPages: inner.totalPages }
+                ? {
+                  page: inner.page,
+                  totalPages: inner.totalPages,
+                  detail: inner.detail,
+                }
                 : {},
             );
           },

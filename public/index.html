@@ -434,6 +434,15 @@
         font-size: 0.78rem;
         color: var(--ink-3);
       }
+      .progress-text .detail {
+        font-size: 0.75rem;
+        color: var(--brand-1);
+        font-weight: 550;
+        display: none;
+      }
+      .progress-text .detail.show {
+        display: block;
+      }
       .progress-track {
         width: 100%;
         height: 7px;
@@ -1294,6 +1303,7 @@
             <div class="progress-text">
               <span class="title" id="progressTitle">Memproses...</span>
               <span class="sub" id="progressSub">0 / 0 selesai (0%)</span>
+              <span class="detail" id="progressDetail"></span>
             </div>
             <span class="pct-chip" id="progressChip">0%</span>
             <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
@@ -1411,13 +1421,22 @@
         if (typeof msg === 'object' && msg !== null) {
           const p = msg;
           phase = p.phase || 'Memproses...';
-          progressPct = p.pct || 0;
+          // Pengaman: jika server mengirim pct 0-1 (mode lama), normalisasi ke 0-100
+          progressPct = p.pct <= 1 ? p.pct * 100 : p.pct;
           const loc = p.fileIndex ? `File ${p.fileIndex}/${p.totalFiles}` : '';
-          const name = p.fileName ? ` — ${p.fileName}` : '';
+          const name = p.fileName ? (loc ? ` — ${p.fileName}` : p.fileName) : '';
           const page = p.page ? ` (halaman ${p.page}/${p.totalPages})` : '';
           sub = `${loc}${name}${page}`;
+          const detailEl = $('progressDetail');
+          if (p.detail) {
+            detailEl.textContent = p.detail;
+            detailEl.classList.add('show');
+          } else if (detailEl.classList.contains('show')) {
+            detailEl.classList.remove('show');
+          }
         } else {
           sub = 'Memproses...';
+          $('progressDetail').classList.remove('show');
         }
         $('progressTitle').textContent = phase;
         $('progressSub').textContent = sub;
@@ -1431,6 +1450,7 @@
         $('progressSub').textContent = `${total} file selesai diproses — semua hasil tersedia di bawah`;
         $('progressFill').style.width = '100%';
         $('progressChip').textContent = '100%';
+        $('progressDetail').classList.remove('show');
         $('loadingBar').classList.add('show');
         setTimeout(hideLoading, 4000);
       }
@@ -1439,6 +1459,7 @@
         $('loadingBar').classList.remove('show');
         $('progressFill').style.width = '0%';
         $('progressChip').textContent = '0%';
+        $('progressDetail').classList.remove('show');
       }
 
       // ---------- Status helpers ----------
@@ -1906,6 +1927,7 @@
               }
               $('progressFill').style.width = '100%';
               $('progressChip').textContent = '100%';
+              $('progressDetail').classList.remove('show');
               $('loadingBar').classList.add('show');
               setTimeout(hideLoading, 4000);
               loadJdihStatus();

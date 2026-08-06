@@ -161,8 +161,11 @@ async function processItem(item, onProgress) {
 
   let pdfBuffer;
   try {
+    // (v30.5) Fase download tampil di UI — pct pipeline dikalikan 100 (0-1 -> 0-100).
+    emit('progress', { pct: 2, phase: '[JDIH] Mengunduh PDF', fileName });
     logger.info(`[JDIH] Download PDF #${id}: ${url}`);
     pdfBuffer = await downloadPdf(url, { headers: buildAuthHeaders(url) });
+    emit('progress', { pct: 4, phase: '[JDIH] Memeriksa file', fileName });
   } catch (error) {
     stats.failed++;
     logger.warn(`[JDIH] Download #${id} gagal: ${error.message} — ditandai converted (PATCH semua status)`);
@@ -311,10 +314,14 @@ async function runUntilEmpty() {
 
         await processItem(item, (inner) => {
           emit('progress', {
-            pct: typeof inner === 'number' ? inner : inner.pct,
+            // (v30.5) pct pipeline 0-1 dikalikan 100 agar bar UI naik natural
+            // 0-100 (sebelumnya macet di 1% dan lompat saat done).
+            pct: Math.round((typeof inner === 'number' ? inner : inner.pct || 0) * 100),
             phase: typeof inner === 'object' && inner.phase ? `[JDIH] ${inner.phase}` : '[JDIH] Memproses',
             fileName,
-            ...(typeof inner === 'object' ? { page: inner.page, totalPages: inner.totalPages } : {}),
+            ...(typeof inner === 'object'
+              ? { page: inner.page, totalPages: inner.totalPages, detail: inner.detail }
+              : {}),
           });
         });
       }
