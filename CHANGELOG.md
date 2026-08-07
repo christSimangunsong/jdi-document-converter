@@ -5,6 +5,48 @@
 
 ---
 
+## Changelog — 2026-08-07 (v30.7)
+
+### ringkasan
+**UI kompak + petunjuk per tab.** (1) **Header/footer diperkecil**: header turun ~140px → ~92px (padding `14px 20px 16px`, logo 78px → 56px ring emas 2px, h1 1.32→1.08rem, strip atas 5→4px, garis emas 3→2px, pola titik `header::after` dihapus); footer → `12px 20px 14px` (logo 34→26px, font 0.72rem, strip 3px, border 2px); mobile: logo 64→48px. (2) **Petunjuk Penggunaan di setiap tab**: kelas baru `.tab-guide` menggantikan `.batch-hint` (CSS lama dihapus) — kartu biru muda dengan `border-left` biru brand, judul bold + ikon **SVG inline** (tanpa emoji), 2-3 poin `<ul>` sesuai logika nyata: URL (1 per baris, maks 20, duplikat ditolak saat simpan), Upload (maks 20, FIFO, file uploads dibersihkan), JDIH (alur GET→unduh→OCR, `converted` baru setelah "Simpan ke Database", GAGAL/RUSAK/KOSONG langsung di-PATCH, Berhenti tanpa ubah status), Aktivitas (grafik 7 hari, laporan CSV/XLSX, Detail, Hapus → item JDIH kembali ke antrean). (3) **Fragmen**: favicon lambang Dairi (`<link rel="icon">`), garis emas 26px di bawah tab aktif (`.tab.active::after`), tooltip `title="Lambang Kabupaten Dairi"` pada logo header & footer. **Logika JS/server/DB tidak disentuh** — hanya CSS + markup statis + 1 tag `<link>`.
+
+### apa yang berubah
+
+| File | perubahan |
+|---|---|
+| `public/index.html` | header compact (padding/logo/h1/p/`::before`/`::after`/pill/dot) + footer compact (padding/logo/font/gap/`::before`); `.batch-hint` → `.tab-guide` (CSS: `border-left: 4px`, `.guide-title` flex + SVG, `ul/li`; markup 4 tab dengan teks petunjuk sesuai logika); `<link rel="icon">`; `.tab.active::after` underline gradasi biru→emas 26×3px; `title` logo header & footer; media query ≤720px (logo 48px, h1 0.95rem, header padding `12px 16px 14px`) |
+
+### hasil verifikasi
+
+- `npx prettier --write public/index.html` — bersih
+- `npm run lint` → **0 error** (20 warning pre-existing, tidak bertambah)
+- `npm test` → **234 passed / 0 failed**
+- HTTP live (server berjalan): `/` → 200 (80.142 byte); favicon link ✅; `tab-guide` 11 kemunculan ✅; teks "Petunjuk Penggunaan" ✅; `batch-hint` 0 sisa ✅; `/img/lambang-dairi.png` → 200 `image/png` ✅
+
+---
+
+## Changelog — 2026-08-07 (v30.6)
+
+### ringkasan
+**UI bergaya kop resmi Pemerintah Kabupaten Dairi — lambang asli + identitas instansi.** Header dirombak dari banner gelap ungu dengan placeholder "JD" menjadi kop resmi ala surat dinas: banner putih bersih, strip gradasi biru→emas di tepi atas, garis emas di tepi bawah, **lambang Kabupaten Dairi resmi** (public domain, sumber dairikab.go.id, unduh dari Wikimedia Commons 700×792 → `public/img/lambang-dairi.png`) dalam bingkai lingkaran emas, teks 3 baris khas kop instansi ("PEMERINTAH KABUPATEN DAIRI" — "JARINGAN DOKUMENTASI DAN INFORMASI HUKUM" — "Konverter Dokumen JDIH..."). Palet brand diganti ungu/indigo → **biru pemerintah + emas** (`--brand-1: #1e3a8a`, `--gold: #c9a227`, `--navy: #0b1f4d`). Footer resmi instansi + logo kecil + strip emas. Sentuhan global konsisten: tab aktif, tombol primary, progress bar, pct-chip, batch-hint, loading-bar, ring focus, chart harian, `::selection` — semua ikut palet baru; chart pie **tidak diubah** (makna warna status dipertahankan). **Tidak ada logika JS/server/DB yang disentuh** — hanya CSS + markup header/footer + teks statis; semua ID dan fungsi tetap.
+
+### apa yang berubah
+
+| File | perubahan |
+|---|---|
+| `public/img/lambang-dairi.png` | **baru** — lambang resmi Kabupaten Dairi (700×792, 233 KB, PNG valid, public domain) |
+| `public/index.html` | `:root`: brand biru pemerintah + `--gold`/`--gold-soft`/`--navy`, ring focus biru; `body` gradasi biru/emas halus; `::selection`; header CSS+markup: kop resmi 3 baris (`.header-institution` uppercase letter-spaced → `header h1` → `header p`), logo bulat ring emas 78px, `header::before` strip biru→emas, `header::after` garis emas bawah + shadow; pill "Server Online" tetap (gaya biru transparan); footer: `.footer-inner` + `.footer-logo` (lingkaran emas 34px) + `.footer-text` instansi + `footer::before` strip; judul tab browser → "JDIH Kabupaten Dairi — Konverter Dokumen"; hardcoded ungu/indigo (#eef2ff/#e0e7ff/#c7d2fe/#f5f6ff/rgba 99,102,241/79,70,229) → biru (#eaf1ff/#d6e4ff/#bfdbfe/#f0f4ff/rgba 29,78,216/30,64,175); chart harian `rgba(30,64,175,0.75)`/`#1e3a8a`; media query ≤720px: `.header-brand` kolom (logo 64px di atas teks center), pill tersembunyi |
+
+### hasil verifikasi
+
+- `public/img/lambang-dairi.png`: signature PNG valid (`89 50 4E 47`), 238.889 byte
+- HTTP live (`node server.js`, `SIDECAR_AUTOSTART=false`): `/img/lambang-dairi.png` → **200, image/png**; `/` → 200, HTML baru 74.746 byte
+- `npx prettier --write public/index.html` — bersih
+- `npm run lint` → **0 error** (20 warning pre-existing, tidak bertambah)
+- `npm test` → **234 passed / 0 failed**
+
+---
+
 ## Changelog — 2026-08-06 (v30.5)
 
 ### ringkasan
